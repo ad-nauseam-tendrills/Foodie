@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foodie — what's for dinner?</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🍽️ Foodie</h1>
+    <div class="household-bar">
+      <input id="householdInput" type="text" placeholder="Household name (e.g. smiths)" />
+      <button id="householdJoinBtn">Use this household</button>
+      <span id="householdStatus" class="household-status"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>What do you like?</h2>
+      <label for="likeInput">Ingredients you have / like</label>
+      <div class="tag-input" id="likeTagInput">
+        <div class="tags" id="likeTags"></div>
+        <input id="likeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
+      </div>
+      <div class="suggestions" id="likeSuggestions"></div>
+
+      <label for="dislikeInput">Ingredients to avoid</label>
+      <div class="tag-input" id="dislikeTagInput">
+        <div class="tags" id="dislikeTags"></div>
+        <input id="dislikeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
+      </div>
+      <div class="suggestions" id="dislikeSuggestions"></div>
+
+      <div class="actions">
+        <button id="saveBtn" class="secondary">Save to household</button>
+        <button id="matchBtn" class="primary">What's for dinner?</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="results-header">
+        <h2>Suggestions</h2>
+        <span id="resultsCount" class="muted"></span>
+      </div>
+      <div id="results" class="results"></div>
+    </section>
+  </main>
+
+  <div id="modalOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <button id="modalClose" class="modal-close" aria-label="Close">✕</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <footer>
+    <p>
+      Self-hosted &amp; ad-free. Ingredient matching only, no AI calls, no data leaves this server.
+      Recipe data courtesy of <a href="https://www.themealdb.com/" target="_blank" rel="noopener">TheMealDB</a>.
+    </p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
