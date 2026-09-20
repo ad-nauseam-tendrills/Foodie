@@ -249,7 +249,34 @@ input[type="text"] {
 .grocery-list-wrap { margin-top: 1.5rem; }
 .grocery-list-wrap h3 { margin: 0 0 0.5rem; font-size: 1rem; }
 
-.grocery-list {
+.pantry-line {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 1rem;
+}
+
+.pantry-line button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+}
+
+.grocery-list { display: grid; gap: 1.25rem; }
+
+.grocery-section-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.grocery-items {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -257,7 +284,7 @@ input[type="text"] {
   gap: 0.5rem;
 }
 
-.grocery-list li {
+.grocery-item {
   display: flex;
   align-items: flex-start;
   gap: 0.6rem;
@@ -265,16 +292,31 @@ input[type="text"] {
   border-bottom: 1px solid var(--border);
 }
 
-.grocery-list li.checked .grocery-item-name,
-.grocery-list li.checked .grocery-item-detail {
+.grocery-item.checked .grocery-item-name,
+.grocery-item.checked .grocery-item-detail {
   text-decoration: line-through;
   color: var(--muted);
 }
 
-.grocery-list input[type="checkbox"] { margin-top: 0.2rem; }
+.grocery-item input[type="checkbox"] { margin-top: 0.2rem; }
 
+.grocery-item-text { flex: 1; min-width: 0; }
 .grocery-item-name { font-weight: 600; }
 .grocery-item-detail { font-size: 0.78rem; color: var(--muted); display: block; }
+
+.have-it-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.have-it-btn:hover { border-color: var(--good); color: var(--good); }
 
 .add-to-plan-btn {
   align-self: flex-start;

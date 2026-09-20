@@ -67,11 +67,27 @@ function matchRecipes(db, opts = {}) {
     const ingredients = ingredientsStmt.all(recipe.id);
     if (ingredients.length === 0) continue;
 
-    if (excludeSet.length && ingredients.some((ing) => ingredientMatches(ing.name, excludeSet))) {
-      continue;
+    // "Avoid curry" should skip curry DISHES, not just recipes whose
+    // ingredient list literally contains the word "curry" -- a chicken
+    // curry made with turmeric, garam masala, and coconut milk has no
+    // ingredient named "curry" at all, but it's still exactly what
+    // someone excluding "curry" means. So exclusions check the recipe's
+    // name/category/tags in addition to its ingredients; `have` stays
+    // ingredient-only, since "what can I make with this" should mean
+    // actual ingredients, not dish concepts.
+    if (excludeSet.length) {
+      const excludeHaystack = [recipe.name, recipe.category, ...recipeTags, ...ingredients.map((ing) => ing.name)];
+      if (excludeHaystack.some((text) => ingredientMatches(text, excludeSet))) continue;
     }
 
     const matched = ingredients.filter((ing) => ingredientMatches(ing.name, haveSet));
+    // If you've said what you like/have, a recipe using none of it isn't
+    // a "0% match" worth showing -- it's just not relevant. Without this,
+    // adding "chicken" still surfaced every dessert and side dish in the
+    // database (ranked lower, but still there), which reads as "the
+    // filter didn't do anything." Category/tag/area already hard-filter
+    // this way; this makes `have` consistent with them.
+    if (haveSet.length > 0 && matched.length === 0) continue;
     const missing = ingredients.filter((ing) => !matched.includes(ing));
     const matchPct = haveSet.length === 0 ? 0 : Math.round((matched.length / ingredients.length) * 100);
 

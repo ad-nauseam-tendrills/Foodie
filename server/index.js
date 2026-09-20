@@ -5,6 +5,8 @@ const path = require('node:path');
 const db = require('./db');
 const { matchRecipes } = require('./services/matcher');
 const { getCurrentSeason, keywordsForSeason } = require('./data/seasonal');
+const { groceryCategoryFor, SECTION_ORDER } = require('./data/grocery-categories');
+const { canonicalizeIngredientName } = require('./data/ingredient-aliases');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,6 +36,7 @@ function householdRowToJson(row) {
     disliked: JSON.parse(row.disliked_ingredients),
     cookedLog: JSON.parse(row.cooked_log),
     planned: JSON.parse(row.planned_recipes || '[]'),
+    pantry: JSON.parse(row.pantry_ingredients || '[]'),
   };
 }
 
@@ -242,12 +245,50 @@ app.delete('/api/households/:name/plan/:recipeId', (req, res) => {
   res.json({ ok: true, planned });
 });
 
+// Pantry staples: ingredients you always have, so they never show up on
+// the grocery list. Synced on the household like everything else here
+// (it's a fact about your kitchen, not a per-device shopping-trip thing --
+// unlike the "checked off" state, which stays local to whichever phone
+// you're actually shopping with).
+app.post('/api/households/:name/pantry', (req, res) => {
+  const row = getHouseholdOr404(req.params.name, res);
+  if (!row) return;
+  const ingredient = canonicalizeIngredientName(String(req.body.ingredient || ''));
+  if (!ingredient) return res.status(400).json({ error: 'ingredient is required' });
+
+  const pantry = JSON.parse(row.pantry_ingredients || '[]');
+  if (!pantry.some((p) => p.toLowerCase() === ingredient.toLowerCase())) pantry.push(ingredient);
+
+  db.prepare(`UPDATE households SET pantry_ingredients = ? WHERE name = ? COLLATE NOCASE`).run(
+    JSON.stringify(pantry),
+    req.params.name
+  );
+  res.json({ ok: true, pantry });
+});
+
+app.delete('/api/households/:name/pantry/:ingredient', (req, res) => {
+  const row = getHouseholdOr404(req.params.name, res);
+  if (!row) return;
+  const target = req.params.ingredient.toLowerCase();
+
+  const pantry = JSON.parse(row.pantry_ingredients || '[]').filter((p) => p.toLowerCase() !== target);
+
+  db.prepare(`UPDATE households SET pantry_ingredients = ? WHERE name = ? COLLATE NOCASE`).run(
+    JSON.stringify(pantry),
+    req.params.name
+  );
+  res.json({ ok: true, pantry });
+});
+
 // The grocery list is generated fresh from the current plan each time --
 // there's no separate stored list to fall out of sync with the plan.
+// Grouped into rough shopping sections (Produce, Meat & Seafood, ...)
+// and with pantry staples already filtered out.
 app.get('/api/households/:name/grocery-list', (req, res) => {
   const row = getHouseholdOr404(req.params.name, res);
   if (!row) return;
   const plannedIds = JSON.parse(row.planned_recipes || '[]');
+  const pantrySet = new Set(JSON.parse(row.pantry_ingredients || '[]').map((p) => p.toLowerCase()));
 
   const recipeStmt = db.prepare(`SELECT id, name FROM recipes WHERE id = ?`);
   const ingredientsStmt = db.prepare(
@@ -266,16 +307,20 @@ app.get('/api/households/:name/grocery-list', (req, res) => {
     recipes.push({ id: recipe.id, name: recipe.name });
 
     for (const ing of ingredientsStmt.all(recipeId)) {
+      if (pantrySet.has(ing.name.toLowerCase())) continue; // already have it -- don't list it
       const key = ing.name.toLowerCase();
       if (!itemsByIngredient.has(key)) {
-        itemsByIngredient.set(key, { ingredient: ing.name, entries: [] });
+        itemsByIngredient.set(key, { ingredient: ing.name, section: groceryCategoryFor(ing.name), entries: [] });
       }
       itemsByIngredient.get(key).entries.push({ recipe: recipe.name, measure: ing.measure || '' });
     }
   }
 
-  const items = [...itemsByIngredient.values()].sort((a, b) => a.ingredient.localeCompare(b.ingredient));
-  res.json({ recipes, items });
+  const items = [...itemsByIngredient.values()].sort((a, b) => {
+    const sectionDiff = SECTION_ORDER.indexOf(a.section) - SECTION_ORDER.indexOf(b.section);
+    return sectionDiff !== 0 ? sectionDiff : a.ingredient.localeCompare(b.ingredient);
+  });
+  res.json({ recipes, items, sections: SECTION_ORDER });
 });
 
 app.get('/api/health', (req, res) => {

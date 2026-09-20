@@ -151,7 +151,10 @@ Either way, point an A record for your domain at the droplet's IP first.
 Saved exclusions (the "always avoid" list) are already permanent once you
 save them to a household -- that's what `PUT .../preferences` below does.
 They reload automatically next time that household name is used, on any
-device.
+device. Excluding "curry" skips curry *dishes*, not just recipes with an
+ingredient literally named "curry" -- it checks the recipe's name,
+category, and tags too, since a chicken curry made with turmeric and
+garam masala has no ingredient called "curry" at all.
 
 ## Meal planning + grocery list
 
@@ -165,10 +168,34 @@ not stored separately, so it can never drift out of sync with the plan.
 Ingredients are merged across recipes (two recipes both needing garlic
 show up as one line, noting both), but quantities aren't summed -- "1 lb"
 and "2 cups" don't have a sane way to combine automatically, so each
-recipe's amount is listed rather than guessed at. Checking items off is
-saved to that browser's `localStorage` only (a personal, per-device
-thing while you're actually walking the store), not synced to the
-household like the plan itself is.
+recipe's amount is listed rather than guessed at ("1 whole for Chicken
+Noodle Soup; 1/2 for Pastel de Choclo"). Checking items off is saved to
+that browser's `localStorage` only (a personal, per-device thing while
+you're actually walking the store), not synced to the household like
+the plan itself is.
+
+The list is grouped into rough shopping sections (Produce, Meat &
+Seafood, Dairy & Eggs, ...) via `server/data/grocery-categories.js` --
+another small hand-maintained keyword list, same philosophy as the
+seasonal calendar and curated recipes: extend it by hand as an
+ingredient lands somewhere wrong, rather than reaching for a heavier
+classifier.
+
+**Pantry staples**: click "✕ have it" on any grocery-list item you
+always have on hand (salt, olive oil, ...) and it's saved to the
+household -- synced across devices, since "we always have this" is a
+fact about your kitchen, not a per-device shopping-trip thing -- and
+excluded from every grocery list from then on. Undo from the "Always
+have" line above the list.
+
+**Why "Carrot" and "Carrots" don't show up as two different
+ingredients**: `server/data/ingredient-aliases.js` canonicalizes known
+spelling variants at seed time, and `db.js` migrates any that already
+split into separate rows in an existing database. It's a small
+hand-maintained list (not a general singular/plural heuristic --
+English food words have too many exceptions like asparagus, hummus,
+and molasses for that to be safe) -- add a pair there if you spot
+another one.
 
 ## API
 
@@ -186,7 +213,9 @@ household like the plan itself is.
 | `POST /api/households/:name/cooked` | Log a recipe as cooked (keeps suggestions from repeating) |
 | `POST /api/households/:name/plan` | Add a recipe to the meal plan |
 | `DELETE /api/households/:name/plan/:recipeId` | Remove a recipe from the meal plan |
-| `GET /api/households/:name/grocery-list` | Combined ingredient list for the current plan |
+| `GET /api/households/:name/grocery-list` | Sectioned, pantry-filtered ingredient list for the current plan |
+| `POST /api/households/:name/pantry` | Mark an ingredient as a pantry staple (excluded from grocery lists) |
+| `DELETE /api/households/:name/pantry/:ingredient` | Un-mark a pantry staple |
 
 ## Roadmap / ideas not built yet
 

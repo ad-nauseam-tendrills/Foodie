@@ -7,6 +7,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
+const { canonicalizeIngredientName } = require('./data/ingredient-aliases');
 
 const DATA_DIR = process.env.FOODIE_DATA_DIR || path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -74,5 +75,70 @@ function addColumnIfMissing(table, column, definition) {
 
 addColumnIfMissing('recipes', 'tags', 'TEXT');
 addColumnIfMissing('households', 'planned_recipes', `TEXT NOT NULL DEFAULT '[]'`);
+addColumnIfMissing('households', 'pantry_ingredients', `TEXT NOT NULL DEFAULT '[]'`);
+
+// Merges ingredient rows that are really the same thing under different
+// spellings (see server/data/ingredient-aliases.js), for databases that
+// already have both e.g. "Carrot" and "Carrots" as separate rows from
+// before that file existed. Safe to run on every startup -- once merged,
+// there's nothing left to do.
+function mergeDuplicateIngredients() {
+  const rows = db.prepare(`SELECT id, name FROM ingredients`).all();
+
+  // Group existing rows by their canonical name.
+  const groups = new Map();
+  for (const row of rows) {
+    const canonical = canonicalizeIngredientName(row.name);
+    if (!groups.has(canonical)) groups.set(canonical, []);
+    groups.get(canonical).push(row);
+  }
+
+  const getLinksStmt = db.prepare(`SELECT recipe_id, measure FROM recipe_ingredients WHERE ingredient_id = ?`);
+  const hasLinkStmt = db.prepare(
+    `SELECT 1 FROM recipe_ingredients WHERE recipe_id = ? AND ingredient_id = ?`
+  );
+  const relinkStmt = db.prepare(
+    `UPDATE recipe_ingredients SET ingredient_id = ? WHERE recipe_id = ? AND ingredient_id = ?`
+  );
+  const deleteLinkStmt = db.prepare(
+    `DELETE FROM recipe_ingredients WHERE recipe_id = ? AND ingredient_id = ?`
+  );
+  const renameStmt = db.prepare(`UPDATE ingredients SET name = ? WHERE id = ?`);
+  const deleteIngredientStmt = db.prepare(`DELETE FROM ingredients WHERE id = ?`);
+
+  for (const [canonical, group] of groups) {
+    if (group.length < 2) {
+      // Lone row -- just make sure its spelling matches the canonical
+      // form (e.g. it was inserted before an alias for it existed).
+      if (group.length === 1 && group[0].name !== canonical) {
+        renameStmt.run(canonical, group[0].id);
+      }
+      continue;
+    }
+
+    // Prefer an existing row that's already spelled exactly right as the
+    // keeper; otherwise take the first and rename it.
+    const exact = group.find((r) => r.name === canonical);
+    const keeper = exact || group[0];
+    if (keeper.name !== canonical) renameStmt.run(canonical, keeper.id);
+
+    for (const dup of group) {
+      if (dup.id === keeper.id) continue;
+      for (const link of getLinksStmt.all(dup.id)) {
+        if (hasLinkStmt.get(link.recipe_id, keeper.id)) {
+          // That recipe already links to the keeper -- drop the
+          // duplicate link rather than violate the (recipe_id,
+          // ingredient_id) primary key.
+          deleteLinkStmt.run(link.recipe_id, dup.id);
+        } else {
+          relinkStmt.run(keeper.id, link.recipe_id, dup.id);
+        }
+      }
+      deleteIngredientStmt.run(dup.id);
+    }
+  }
+}
+
+mergeDuplicateIngredients();
 
 module.exports = db;

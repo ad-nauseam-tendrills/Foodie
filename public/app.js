@@ -5,6 +5,7 @@ const state = {
   liked: [],
   disliked: [],
   planned: [], // recipe IDs currently in the meal plan
+  pantry: [], // ingredients you always have -- never shown on the grocery list
 };
 
 const el = {
@@ -37,11 +38,12 @@ const el = {
   planEmptyState: document.getElementById('planEmptyState'),
   groceryListWrap: document.getElementById('groceryListWrap'),
   groceryList: document.getElementById('groceryList'),
+  pantryLine: document.getElementById('pantryLine'),
 };
 
 // ---------- Tag input helper --------------------------------------------
 
-function renderTags(list, container, kind) {
+function renderTags(list, container, kind, onChange) {
   container.innerHTML = '';
   for (const value of list) {
     const tag = document.createElement('span');
@@ -53,32 +55,35 @@ function renderTags(list, container, kind) {
     removeBtn.addEventListener('click', () => {
       const idx = list.indexOf(value);
       if (idx !== -1) list.splice(idx, 1);
-      renderTags(list, container, kind);
+      renderTags(list, container, kind, onChange);
+      if (onChange) onChange();
     });
     tag.appendChild(removeBtn);
     container.appendChild(tag);
   }
 }
 
-function addTag(list, container, kind, rawValue) {
+function addTag(list, container, kind, rawValue, onChange) {
   const value = rawValue.trim();
   if (!value) return;
   if (!list.some((v) => v.toLowerCase() === value.toLowerCase())) {
     list.push(value);
-    renderTags(list, container, kind);
+    renderTags(list, container, kind, onChange);
   }
 }
 
-function wireTagInput({ input, tagsContainer, suggestionsContainer, list, kind }) {
+function wireTagInput({ input, tagsContainer, suggestionsContainer, list, kind, onChange }) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
-      addTag(list, tagsContainer, kind, input.value);
+      addTag(list, tagsContainer, kind, input.value, onChange);
       input.value = '';
       suggestionsContainer.innerHTML = '';
+      if (onChange) onChange();
     } else if (e.key === 'Backspace' && !input.value && list.length) {
       list.pop();
-      renderTags(list, tagsContainer, kind);
+      renderTags(list, tagsContainer, kind, onChange);
+      if (onChange) onChange();
     }
   });
 
@@ -99,10 +104,11 @@ function wireTagInput({ input, tagsContainer, suggestionsContainer, list, kind }
         chip.className = 'suggestion-chip';
         chip.textContent = option;
         chip.addEventListener('click', () => {
-          addTag(list, tagsContainer, kind, option);
+          addTag(list, tagsContainer, kind, option, onChange);
           input.value = '';
           suggestionsContainer.innerHTML = '';
           input.focus();
+          if (onChange) onChange();
         });
         suggestionsContainer.appendChild(chip);
       }
@@ -146,12 +152,15 @@ async function joinHousehold(name) {
   state.liked = data.liked;
   state.disliked = data.disliked;
   state.planned = data.planned || [];
+  state.pantry = data.pantry || [];
   localStorage.setItem('foodie_household', data.name);
   el.householdStatus.textContent = `Synced as "${data.name}"`;
   el.householdStatus.classList.remove('warn');
-  renderTags(state.liked, el.likeTags, 'like');
-  renderTags(state.disliked, el.dislikeTags, 'dislike');
+  renderTags(state.liked, el.likeTags, 'like', findDinner);
+  renderTags(state.disliked, el.dislikeTags, 'dislike', findDinner);
   renderSavedExclusionsLine();
+  renderPantryLine();
+  findDinner().catch(() => {});
   loadGroceryList().catch(() => {});
 }
 
@@ -441,6 +450,46 @@ async function removeFromPlan(recipeId) {
   await loadGroceryList();
 }
 
+async function addToPantry(ingredient) {
+  const data = await fetchJson(`/api/households/${encodeURIComponent(state.household)}/pantry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ingredient }),
+  });
+  state.pantry = data.pantry;
+  renderPantryLine();
+  await loadGroceryList();
+}
+
+async function removeFromPantry(ingredient) {
+  const data = await fetchJson(
+    `/api/households/${encodeURIComponent(state.household)}/pantry/${encodeURIComponent(ingredient)}`,
+    { method: 'DELETE' }
+  );
+  state.pantry = data.pantry;
+  renderPantryLine();
+  await loadGroceryList();
+}
+
+function renderPantryLine() {
+  el.pantryLine.innerHTML = '';
+  if (!state.pantry.length) {
+    el.pantryLine.hidden = true;
+    return;
+  }
+  el.pantryLine.hidden = false;
+  el.pantryLine.append('Always have, never on the list: ');
+  state.pantry.forEach((ingredient, i) => {
+    if (i > 0) el.pantryLine.append(', ');
+    el.pantryLine.append(ingredient + ' ');
+    const undoBtn = document.createElement('button');
+    undoBtn.type = 'button';
+    undoBtn.textContent = '(undo)';
+    undoBtn.addEventListener('click', () => removeFromPantry(ingredient));
+    el.pantryLine.appendChild(undoBtn);
+  });
+}
+
 async function loadGroceryList() {
   if (!state.household) return;
   const { recipes, items } = await fetchJson(
@@ -472,35 +521,67 @@ function renderGroceryList(items) {
   el.groceryListWrap.hidden = items.length === 0;
   const checkedSet = getCheckedIngredients();
 
+  // Items already arrive sorted by section from the server; group them
+  // for rendering without losing that order.
+  const bySection = new Map();
   for (const item of items) {
-    const li = document.createElement('li');
-    const key = item.ingredient.toLowerCase();
-    if (checkedSet.has(key)) li.classList.add('checked');
+    if (!bySection.has(item.section)) bySection.set(item.section, []);
+    bySection.get(item.section).push(item);
+  }
 
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = checkedSet.has(key);
-    checkbox.addEventListener('change', () => {
-      li.classList.toggle('checked', checkbox.checked);
-      setIngredientChecked(key, checkbox.checked);
-    });
-    li.appendChild(checkbox);
+  for (const [section, sectionItems] of bySection) {
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'grocery-section';
 
-    const label = document.createElement('div');
-    const name = document.createElement('span');
-    name.className = 'grocery-item-name';
-    name.textContent = item.ingredient;
-    label.appendChild(name);
+    const title = document.createElement('h4');
+    title.className = 'grocery-section-title';
+    title.textContent = section;
+    sectionEl.appendChild(title);
 
-    const detail = document.createElement('span');
-    detail.className = 'grocery-item-detail';
-    detail.textContent = item.entries
-      .map((e) => (e.measure ? `${e.measure} (${e.recipe})` : e.recipe))
-      .join(', ');
-    label.appendChild(detail);
+    const list = document.createElement('ul');
+    list.className = 'grocery-items';
 
-    li.appendChild(label);
-    el.groceryList.appendChild(li);
+    for (const item of sectionItems) {
+      const li = document.createElement('li');
+      li.className = 'grocery-item';
+      const key = item.ingredient.toLowerCase();
+      if (checkedSet.has(key)) li.classList.add('checked');
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = checkedSet.has(key);
+      checkbox.addEventListener('change', () => {
+        li.classList.toggle('checked', checkbox.checked);
+        setIngredientChecked(key, checkbox.checked);
+      });
+      li.appendChild(checkbox);
+
+      const text = document.createElement('div');
+      text.className = 'grocery-item-text';
+      const name = document.createElement('span');
+      name.className = 'grocery-item-name';
+      name.textContent = item.ingredient;
+      text.appendChild(name);
+
+      const detail = document.createElement('span');
+      detail.className = 'grocery-item-detail';
+      detail.textContent = item.entries.map((e) => (e.measure ? `${e.measure} for ${e.recipe}` : e.recipe)).join('; ');
+      text.appendChild(detail);
+      li.appendChild(text);
+
+      const haveItBtn = document.createElement('button');
+      haveItBtn.type = 'button';
+      haveItBtn.className = 'have-it-btn';
+      haveItBtn.textContent = '✕ have it';
+      haveItBtn.title = 'Already have this -- stop listing it';
+      haveItBtn.addEventListener('click', () => addToPantry(item.ingredient));
+      li.appendChild(haveItBtn);
+
+      list.appendChild(li);
+    }
+
+    sectionEl.appendChild(list);
+    el.groceryList.appendChild(sectionEl);
   }
 }
 
@@ -531,6 +612,7 @@ wireTagInput({
   suggestionsContainer: el.likeSuggestions,
   list: state.liked,
   kind: 'like',
+  onChange: findDinner,
 });
 
 wireTagInput({
@@ -539,6 +621,7 @@ wireTagInput({
   suggestionsContainer: el.dislikeSuggestions,
   list: state.disliked,
   kind: 'dislike',
+  onChange: findDinner,
 });
 
 el.householdJoinBtn.addEventListener('click', () => joinHousehold(el.householdInput.value.trim()));
@@ -554,6 +637,20 @@ el.modalOverlay.addEventListener('click', (e) => {
 });
 el.seasonalInfoBtn.addEventListener('click', toggleSeasonalInfo);
 
+// Every filter re-runs the search immediately on change -- previously
+// only the "What's for dinner?" button did, so adding an ingredient or
+// picking a category looked like it did nothing until that separate
+// click. Category/area already hard-filtered results once you searched;
+// now everything responds the same way, right away.
+el.categorySelect.addEventListener('change', findDinner);
+el.areaSelect.addEventListener('change', findDinner);
+el.seasonalToggle.addEventListener('change', findDinner);
+let tagDebounce;
+el.tagInput.addEventListener('input', () => {
+  clearTimeout(tagDebounce);
+  tagDebounce = setTimeout(findDinner, 300);
+});
+
 (async function init() {
   loadCategories().catch(() => {});
   loadAreas().catch(() => {});
@@ -567,5 +664,7 @@ el.seasonalInfoBtn.addEventListener('click', toggleSeasonalInfo);
     } catch {
       // household no longer exists on this server -- ignore, start fresh
     }
+  } else {
+    findDinner().catch(() => {}); // browse mode -- show something immediately
   }
 })();

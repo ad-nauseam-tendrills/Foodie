@@ -5,9 +5,13 @@
 // so "insert or update a recipe and its ingredient list" only exists once.
 
 const db = require('../db');
+const { canonicalizeIngredientName } = require('../data/ingredient-aliases');
 
 function getOrCreateIngredientId(name) {
-  const clean = name.trim();
+  // Collapse known variants ("Carrots" -> "Carrot") before insert/lookup
+  // so they never split into separate rows in the first place. See
+  // server/data/ingredient-aliases.js.
+  const clean = canonicalizeIngredientName(name);
   db.prepare(`INSERT OR IGNORE INTO ingredients (name) VALUES (?)`).run(clean);
   return db.prepare(`SELECT id FROM ingredients WHERE name = ? COLLATE NOCASE`).get(clean).id;
 }
