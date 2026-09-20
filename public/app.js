@@ -30,6 +30,7 @@ const el = {
   areaSelect: document.getElementById('areaSelect'),
   tagInput: document.getElementById('tagInput'),
   tagOptions: document.getElementById('tagOptions'),
+  quickToggle: document.getElementById('quickToggle'),
   seasonalToggle: document.getElementById('seasonalToggle'),
   seasonalLabel: document.getElementById('seasonalLabel'),
   seasonalInfoBtn: document.getElementById('seasonalInfoBtn'),
@@ -197,7 +198,11 @@ async function findDinner() {
   const categoryParam = category ? `&category=${encodeURIComponent(category)}` : '';
   const area = el.areaSelect.value;
   const areaParam = area ? `&area=${encodeURIComponent(area)}` : '';
-  const tag = el.tagInput.value.trim();
+  // The quick-toggle takes over the tag filter (server-side "quick" is
+  // just the existing "Quick" tag, applied on curated recipes like
+  // sloppy joes, potato pancakes, pancakes, ...) -- keeping this to one
+  // active tag at a time avoids needing to support combining tags.
+  const tag = el.quickToggle.checked ? 'Quick' : el.tagInput.value.trim();
   const tagParam = tag ? `&tag=${encodeURIComponent(tag)}` : '';
   const seasonalParam = el.seasonalToggle.checked ? `&seasonal=true` : '';
   el.results.innerHTML = '<p class="empty-state">Looking…</p>';
@@ -645,6 +650,11 @@ el.seasonalInfoBtn.addEventListener('click', toggleSeasonalInfo);
 el.categorySelect.addEventListener('change', findDinner);
 el.areaSelect.addEventListener('change', findDinner);
 el.seasonalToggle.addEventListener('change', findDinner);
+el.quickToggle.addEventListener('change', () => {
+  el.tagInput.disabled = el.quickToggle.checked;
+  if (el.quickToggle.checked) el.tagInput.value = '';
+  findDinner();
+});
 let tagDebounce;
 el.tagInput.addEventListener('input', () => {
   clearTimeout(tagDebounce);
