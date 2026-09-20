@@ -18,11 +18,19 @@ const el = {
   dislikeSuggestions: document.getElementById('dislikeSuggestions'),
   saveBtn: document.getElementById('saveBtn'),
   matchBtn: document.getElementById('matchBtn'),
+  savedExclusionsLine: document.getElementById('savedExclusionsLine'),
   results: document.getElementById('results'),
   resultsCount: document.getElementById('resultsCount'),
   modalOverlay: document.getElementById('modalOverlay'),
   modalBody: document.getElementById('modalBody'),
   modalClose: document.getElementById('modalClose'),
+  categorySelect: document.getElementById('categorySelect'),
+  tagInput: document.getElementById('tagInput'),
+  tagOptions: document.getElementById('tagOptions'),
+  seasonalToggle: document.getElementById('seasonalToggle'),
+  seasonalLabel: document.getElementById('seasonalLabel'),
+  seasonalInfoBtn: document.getElementById('seasonalInfoBtn'),
+  seasonalInfoBox: document.getElementById('seasonalInfoBox'),
 };
 
 // ---------- Tag input helper --------------------------------------------
@@ -123,6 +131,16 @@ async function joinHousehold(name) {
   el.householdStatus.textContent = `Synced as "${data.name}"`;
   renderTags(state.liked, el.likeTags, 'like');
   renderTags(state.disliked, el.dislikeTags, 'dislike');
+  renderSavedExclusionsLine();
+}
+
+function renderSavedExclusionsLine() {
+  if (state.disliked.length) {
+    el.savedExclusionsLine.textContent = `Saved exclusion${state.disliked.length > 1 ? 's' : ''}: ${state.disliked.join(', ')}`;
+    el.savedExclusionsLine.hidden = false;
+  } else {
+    el.savedExclusionsLine.hidden = true;
+  }
 }
 
 async function savePreferences() {
@@ -136,6 +154,7 @@ async function savePreferences() {
     body: JSON.stringify({ liked: state.liked, disliked: state.disliked }),
   });
   el.householdStatus.textContent = `Saved to "${state.household}"`;
+  renderSavedExclusionsLine();
 }
 
 // ---------- Matching & rendering ------------------------------------------
@@ -144,10 +163,16 @@ async function findDinner() {
   const have = state.liked.join(',');
   const exclude = state.disliked.join(',');
   const householdParam = state.household ? `&household=${encodeURIComponent(state.household)}` : '';
+  const category = el.categorySelect.value;
+  const categoryParam = category ? `&category=${encodeURIComponent(category)}` : '';
+  const tag = el.tagInput.value.trim();
+  const tagParam = tag ? `&tag=${encodeURIComponent(tag)}` : '';
+  const seasonalParam = el.seasonalToggle.checked ? `&seasonal=true` : '';
   el.results.innerHTML = '<p class="empty-state">Looking…</p>';
 
   const recipes = await fetchJson(
-    `/api/recipes/match?have=${encodeURIComponent(have)}&exclude=${encodeURIComponent(exclude)}${householdParam}`
+    `/api/recipes/match?have=${encodeURIComponent(have)}&exclude=${encodeURIComponent(exclude)}` +
+      `${householdParam}${categoryParam}${tagParam}${seasonalParam}`
   );
 
   el.resultsCount.textContent = recipes.length ? `${recipes.length} matches` : '';
@@ -185,6 +210,20 @@ function renderRecipeCard(recipe) {
   const title = document.createElement('h3');
   title.textContent = recipe.name;
   body.appendChild(title);
+
+  if (recipe.category || (recipe.tags && recipe.tags.length)) {
+    const meta = document.createElement('p');
+    meta.className = 'card-meta-line';
+    meta.textContent = [recipe.category, ...(recipe.tags || [])].filter(Boolean).join(' • ');
+    body.appendChild(meta);
+  }
+
+  if (recipe.seasonalIngredients && recipe.seasonalIngredients.length) {
+    const seasonal = document.createElement('p');
+    seasonal.className = 'seasonal-badge';
+    seasonal.textContent = `🍂 In season: ${recipe.seasonalIngredients.slice(0, 3).join(', ')}`;
+    body.appendChild(seasonal);
+  }
 
   if (recipe.missingIngredients.length) {
     const missing = document.createElement('p');
@@ -268,6 +307,48 @@ function closeModal() {
   el.modalBody.innerHTML = '';
 }
 
+// ---------- Filters: category, tag, seasonal -------------------------------
+
+async function loadCategories() {
+  const categories = await fetchJson('/api/categories');
+  for (const category of categories) {
+    const option = document.createElement('option');
+    option.value = category;
+    option.textContent = category;
+    el.categorySelect.appendChild(option);
+  }
+}
+
+async function loadTags() {
+  const tags = await fetchJson('/api/tags');
+  el.tagOptions.innerHTML = '';
+  for (const tag of tags) {
+    const option = document.createElement('option');
+    option.value = tag;
+    el.tagOptions.appendChild(option);
+  }
+}
+
+let seasonalData = null;
+
+async function loadSeasonal() {
+  seasonalData = await fetchJson('/api/seasonal/current');
+  el.seasonalLabel.textContent = `Only what's in season (${seasonalData.season})`;
+}
+
+function toggleSeasonalInfo() {
+  if (!el.seasonalInfoBox.hidden) {
+    el.seasonalInfoBox.hidden = true;
+    return;
+  }
+  if (!seasonalData) return;
+  el.seasonalInfoBox.textContent = seasonalData.ingredients.length
+    ? `In season near the Northeast US right now (${seasonalData.season}): ${seasonalData.ingredients.join(', ')}. ` +
+      `This is a static regional estimate, not based on your exact location.`
+    : `No seasonal matches found in the current recipe database for ${seasonalData.season}.`;
+  el.seasonalInfoBox.hidden = false;
+}
+
 // ---------- Wire up --------------------------------------------------------
 
 wireTagInput({
@@ -297,8 +378,13 @@ el.modalClose.addEventListener('click', closeModal);
 el.modalOverlay.addEventListener('click', (e) => {
   if (e.target === el.modalOverlay) closeModal();
 });
+el.seasonalInfoBtn.addEventListener('click', toggleSeasonalInfo);
 
 (async function init() {
+  loadCategories().catch(() => {});
+  loadTags().catch(() => {});
+  loadSeasonal().catch(() => {});
+
   if (state.household) {
     el.householdInput.value = state.household;
     try {

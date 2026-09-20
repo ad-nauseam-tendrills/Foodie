@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('node:path');
 const db = require('./db');
 const { matchRecipes } = require('./services/matcher');
+const { getCurrentSeason, keywordsForSeason } = require('./data/seasonal');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,9 +40,51 @@ app.get('/api/ingredients', (req, res) => {
 
 // --- Recipes -------------------------------------------------------------
 
+// Categories are TheMealDB's broad groupings (Chicken, Seafood, Dessert,
+// Vegetarian, ...) -- this is what separates "dessert" from "dinner".
+app.get('/api/categories', (req, res) => {
+  const rows = db
+    .prepare(`SELECT DISTINCT category FROM recipes WHERE category IS NOT NULL AND category != '' ORDER BY category`)
+    .all();
+  res.json(rows.map((r) => r.category));
+});
+
+// Tags are finer-grained and freeform (Soup, Curry, Spicy, ...) -- this
+// is what makes "just show me soups" possible even though Soup isn't a
+// category of its own.
+app.get('/api/tags', (req, res) => {
+  const rows = db.prepare(`SELECT tags FROM recipes WHERE tags IS NOT NULL AND tags != ''`).all();
+  const seen = new Set();
+  for (const row of rows) {
+    for (const tag of row.tags.split(',')) {
+      const clean = tag.trim();
+      if (clean) seen.add(clean);
+    }
+  }
+  res.json([...seen].sort((a, b) => a.localeCompare(b)));
+});
+
+// A regional, hand-curated approximation of what's in season right now
+// (Northeastern US) -- not location-aware, just a static harvest
+// calendar -- intersected with ingredients actually used in this
+// database so the list is useful rather than aspirational.
+app.get('/api/seasonal/current', (req, res) => {
+  const season = getCurrentSeason();
+  const keywords = keywordsForSeason(season);
+  const allIngredients = db.prepare(`SELECT name FROM ingredients`).all();
+  const inSeason = allIngredients
+    .filter((ing) => keywords.some((kw) => ing.name.toLowerCase().includes(kw)))
+    .map((ing) => ing.name)
+    .sort((a, b) => a.localeCompare(b));
+  res.json({ season, ingredients: inSeason });
+});
+
 app.get('/api/recipes/match', (req, res) => {
   const have = parseList(req.query.have);
   const exclude = parseList(req.query.exclude);
+  const category = String(req.query.category || '').trim() || null;
+  const tag = String(req.query.tag || '').trim() || null;
+  const seasonalOnly = req.query.seasonal === 'true';
 
   let recentRecipeIds = new Set();
   const household = String(req.query.household || '').trim();
@@ -56,7 +99,19 @@ app.get('/api/recipes/match', (req, res) => {
     }
   }
 
-  const results = matchRecipes(db, { have, exclude, recentRecipeIds });
+  // "Show me what's seasonal" also lightly re-ranks results toward
+  // seasonal ingredients even when the filter isn't strictly on.
+  const seasonalKeywords = keywordsForSeason(getCurrentSeason());
+
+  const results = matchRecipes(db, {
+    have,
+    exclude,
+    recentRecipeIds,
+    category,
+    tag,
+    seasonalKeywords,
+    seasonalOnly,
+  });
   res.json(results);
 });
 

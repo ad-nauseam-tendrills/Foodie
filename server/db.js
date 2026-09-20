@@ -27,7 +27,8 @@ db.exec(`
     instructions TEXT,
     image_url TEXT,
     source_url TEXT,
-    source TEXT NOT NULL DEFAULT 'TheMealDB'
+    source TEXT NOT NULL DEFAULT 'TheMealDB',
+    tags TEXT
   );
 
   CREATE TABLE IF NOT EXISTS ingredients (
@@ -57,5 +58,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
   CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_ingredient ON recipe_ingredients(ingredient_id);
 `);
+
+// Migration for databases created before the `tags` column existed --
+// CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so an
+// already-seeded database needs the column added explicitly.
+const hasTagsColumn = db
+  .prepare(`SELECT 1 FROM pragma_table_info('recipes') WHERE name = 'tags'`)
+  .get();
+if (!hasTagsColumn) {
+  db.exec(`ALTER TABLE recipes ADD COLUMN tags TEXT`);
+}
 
 module.exports = db;

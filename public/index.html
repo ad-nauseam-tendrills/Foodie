@@ -26,17 +26,45 @@
       </div>
       <div class="suggestions" id="likeSuggestions"></div>
 
-      <label for="dislikeInput">Ingredients to avoid</label>
+      <label for="dislikeInput">Ingredients to avoid, always (e.g. "curry", "coconut")</label>
       <div class="tag-input" id="dislikeTagInput">
         <div class="tags" id="dislikeTags"></div>
         <input id="dislikeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
       </div>
       <div class="suggestions" id="dislikeSuggestions"></div>
+      <p id="savedExclusionsLine" class="saved-exclusions-line" hidden></p>
 
       <div class="actions">
-        <button id="saveBtn" class="secondary">Save to household</button>
+        <button id="saveBtn" class="secondary">Save exclusions to household</button>
         <button id="matchBtn" class="primary">What's for dinner?</button>
       </div>
+    </section>
+
+    <section class="panel">
+      <h2>Narrow it down</h2>
+      <div class="filters-row">
+        <div class="filter-field">
+          <label for="categorySelect">Category</label>
+          <select id="categorySelect">
+            <option value="">Any</option>
+          </select>
+        </div>
+
+        <div class="filter-field">
+          <label for="tagInput">Tag (e.g. Soup, Curry, Stew)</label>
+          <input id="tagInput" type="text" placeholder="type a tag…" autocomplete="off" list="tagOptions" />
+          <datalist id="tagOptions"></datalist>
+        </div>
+
+        <div class="filter-field filter-field-checkbox">
+          <label class="checkbox-label">
+            <input id="seasonalToggle" type="checkbox" />
+            <span id="seasonalLabel">Only what's in season</span>
+          </label>
+          <button id="seasonalInfoBtn" type="button" class="link-btn">what's in season?</button>
+        </div>
+      </div>
+      <div id="seasonalInfoBox" class="seasonal-info-box" hidden></div>
     </section>
 
     <section class="panel">

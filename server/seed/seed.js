@@ -32,15 +32,16 @@ function getOrCreateIngredientId(name) {
 }
 
 const insertRecipeStmt = db.prepare(`
-  INSERT INTO recipes (external_id, name, category, area, instructions, image_url, source_url, source)
-  VALUES (@external_id, @name, @category, @area, @instructions, @image_url, @source_url, 'TheMealDB')
+  INSERT INTO recipes (external_id, name, category, area, instructions, image_url, source_url, source, tags)
+  VALUES (@external_id, @name, @category, @area, @instructions, @image_url, @source_url, 'TheMealDB', @tags)
   ON CONFLICT(external_id) DO UPDATE SET
     name = excluded.name,
     category = excluded.category,
     area = excluded.area,
     instructions = excluded.instructions,
     image_url = excluded.image_url,
-    source_url = excluded.source_url
+    source_url = excluded.source_url,
+    tags = excluded.tags
 `);
 const getRecipeIdStmt = db.prepare(`SELECT id FROM recipes WHERE external_id = ?`);
 const linkIngredientStmt = db.prepare(`
@@ -57,6 +58,10 @@ function importMeal(meal) {
     instructions: meal.strInstructions || null,
     image_url: meal.strMealThumb || null,
     source_url: meal.strSource || `https://www.themealdb.com/meal/${meal.idMeal}`,
+    // TheMealDB's freeform tags (e.g. "Soup,Curry,Spicy") -- separate
+    // from strCategory, and what makes something like "just soups"
+    // filterable even though "Soup" isn't its own category.
+    tags: meal.strTags || null,
   });
   const recipeId = getRecipeIdStmt.get(meal.idMeal).id;
 

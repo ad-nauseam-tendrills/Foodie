@@ -103,15 +103,38 @@ name and `reverse_proxy localhost:3001`).
 
 Either way, point an A record for your domain at the droplet's IP first.
 
+## Filtering: category, tags, and season
+
+- **Category** narrows to a broad group TheMealDB assigns (Chicken, Seafood,
+  Dessert, Vegetarian, ...) -- this is what separates dessert from dinner.
+- **Tags** are finer-grained and freeform (Soup, Curry, Stew, ...) -- this
+  is what makes "just soups" possible even though Soup isn't a category of
+  its own. Existing recipes need a re-seed (`npm run seed`) to backfill
+  tags, since TheMealDB's tag field wasn't captured before this.
+- **Seasonal** is a static, hand-curated Northeastern US harvest calendar
+  (`server/data/seasonal.js`), not anything location-aware -- there's no
+  free API for "what's actually in season near me" by exact location. It
+  nudges the ranking toward in-season ingredients always, and the "only
+  what's in season" toggle filters to just those. Edit that file directly
+  if you're elsewhere or want a different region's calendar.
+
+Saved exclusions (the "always avoid" list) are already permanent once you
+save them to a household -- that's what `PUT .../preferences` below does.
+They reload automatically next time that household name is used, on any
+device.
+
 ## API
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/ingredients?q=` | Autocomplete over known ingredient names |
-| `GET /api/recipes/match?have=a,b&exclude=c&household=name` | Ranked recipe matches |
+| `GET /api/categories` | Distinct recipe categories |
+| `GET /api/tags` | Distinct recipe tags |
+| `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) |
+| `GET /api/recipes/match?have=a,b&exclude=c&household=name&category=&tag=&seasonal=true` | Ranked recipe matches |
 | `GET /api/recipes/:id` | Full recipe detail |
 | `POST /api/households` | Create/fetch a household by name |
-| `PUT /api/households/:name/preferences` | Save liked/disliked ingredients |
+| `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (permanent exclusions) |
 | `POST /api/households/:name/cooked` | Log a recipe as cooked (keeps suggestions from repeating) |
 
 ## Roadmap / ideas not built yet
