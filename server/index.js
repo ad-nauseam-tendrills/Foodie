@@ -25,6 +25,7 @@ function householdRowToJson(row) {
     liked: JSON.parse(row.liked_ingredients),
     disliked: JSON.parse(row.disliked_ingredients),
     cookedLog: JSON.parse(row.cooked_log),
+    planned: JSON.parse(row.planned_recipes || '[]'),
   };
 }
 
@@ -177,6 +178,86 @@ app.post('/api/households/:name/cooked', (req, res) => {
     req.params.name
   );
   res.json({ ok: true });
+});
+
+// --- Meal plan + grocery list ---------------------------------------------
+
+function getHouseholdOr404(name, res) {
+  const row = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(name);
+  if (!row) {
+    res.status(404).json({ error: 'Household not found' });
+    return null;
+  }
+  return row;
+}
+
+app.post('/api/households/:name/plan', (req, res) => {
+  const row = getHouseholdOr404(req.params.name, res);
+  if (!row) return;
+  const recipeId = Number(req.body.recipeId);
+  if (!recipeId) return res.status(400).json({ error: 'recipeId is required' });
+  if (!db.prepare(`SELECT 1 FROM recipes WHERE id = ?`).get(recipeId)) {
+    return res.status(404).json({ error: 'Recipe not found' });
+  }
+
+  const planned = JSON.parse(row.planned_recipes || '[]');
+  if (!planned.includes(recipeId)) planned.push(recipeId);
+
+  db.prepare(`UPDATE households SET planned_recipes = ? WHERE name = ? COLLATE NOCASE`).run(
+    JSON.stringify(planned),
+    req.params.name
+  );
+  res.json({ ok: true, planned });
+});
+
+app.delete('/api/households/:name/plan/:recipeId', (req, res) => {
+  const row = getHouseholdOr404(req.params.name, res);
+  if (!row) return;
+  const recipeId = Number(req.params.recipeId);
+
+  const planned = JSON.parse(row.planned_recipes || '[]').filter((id) => id !== recipeId);
+
+  db.prepare(`UPDATE households SET planned_recipes = ? WHERE name = ? COLLATE NOCASE`).run(
+    JSON.stringify(planned),
+    req.params.name
+  );
+  res.json({ ok: true, planned });
+});
+
+// The grocery list is generated fresh from the current plan each time --
+// there's no separate stored list to fall out of sync with the plan.
+app.get('/api/households/:name/grocery-list', (req, res) => {
+  const row = getHouseholdOr404(req.params.name, res);
+  if (!row) return;
+  const plannedIds = JSON.parse(row.planned_recipes || '[]');
+
+  const recipeStmt = db.prepare(`SELECT id, name FROM recipes WHERE id = ?`);
+  const ingredientsStmt = db.prepare(
+    `SELECT i.name AS name, ri.measure AS measure
+     FROM recipe_ingredients ri
+     JOIN ingredients i ON i.id = ri.ingredient_id
+     WHERE ri.recipe_id = ?`
+  );
+
+  const recipes = [];
+  const itemsByIngredient = new Map();
+
+  for (const recipeId of plannedIds) {
+    const recipe = recipeStmt.get(recipeId);
+    if (!recipe) continue; // recipe database was re-seeded/changed since planning
+    recipes.push({ id: recipe.id, name: recipe.name });
+
+    for (const ing of ingredientsStmt.all(recipeId)) {
+      const key = ing.name.toLowerCase();
+      if (!itemsByIngredient.has(key)) {
+        itemsByIngredient.set(key, { ingredient: ing.name, entries: [] });
+      }
+      itemsByIngredient.get(key).entries.push({ recipe: recipe.name, measure: ing.measure || '' });
+    }
+  }
+
+  const items = [...itemsByIngredient.values()].sort((a, b) => a.ingredient.localeCompare(b.ingredient));
+  res.json({ recipes, items });
 });
 
 app.get('/api/health', (req, res) => {

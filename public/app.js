@@ -4,6 +4,7 @@ const state = {
   household: localStorage.getItem('foodie_household') || '',
   liked: [],
   disliked: [],
+  planned: [], // recipe IDs currently in the meal plan
 };
 
 const el = {
@@ -31,6 +32,10 @@ const el = {
   seasonalLabel: document.getElementById('seasonalLabel'),
   seasonalInfoBtn: document.getElementById('seasonalInfoBtn'),
   seasonalInfoBox: document.getElementById('seasonalInfoBox'),
+  plannedList: document.getElementById('plannedList'),
+  planEmptyState: document.getElementById('planEmptyState'),
+  groceryListWrap: document.getElementById('groceryListWrap'),
+  groceryList: document.getElementById('groceryList'),
 };
 
 // ---------- Tag input helper --------------------------------------------
@@ -127,11 +132,13 @@ async function joinHousehold(name) {
   state.household = data.name;
   state.liked = data.liked;
   state.disliked = data.disliked;
+  state.planned = data.planned || [];
   localStorage.setItem('foodie_household', data.name);
   el.householdStatus.textContent = `Synced as "${data.name}"`;
   renderTags(state.liked, el.likeTags, 'like');
   renderTags(state.disliked, el.dislikeTags, 'dislike');
   renderSavedExclusionsLine();
+  loadGroceryList().catch(() => {});
 }
 
 function renderSavedExclusionsLine() {
@@ -241,6 +248,8 @@ function renderRecipeCard(recipe) {
     body.appendChild(note);
   }
 
+  body.appendChild(createAddToPlanButton(recipe.id));
+
   card.appendChild(body);
   return card;
 }
@@ -284,6 +293,13 @@ async function openRecipeModal(id) {
   el.modalBody.appendChild(instructions);
 
   if (state.household) {
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    const planBtn = createAddToPlanButton(recipe.id);
+    planBtn.classList.add('secondary');
+    actions.appendChild(planBtn);
+
     const cookedBtn = document.createElement('button');
     cookedBtn.className = 'primary';
     cookedBtn.textContent = "We're making this tonight";
@@ -296,7 +312,9 @@ async function openRecipeModal(id) {
       cookedBtn.textContent = 'Logged ✓';
       cookedBtn.disabled = true;
     });
-    el.modalBody.appendChild(cookedBtn);
+    actions.appendChild(cookedBtn);
+
+    el.modalBody.appendChild(actions);
   }
 
   el.modalOverlay.classList.remove('hidden');
@@ -347,6 +365,136 @@ function toggleSeasonalInfo() {
       `This is a static regional estimate, not based on your exact location.`
     : `No seasonal matches found in the current recipe database for ${seasonalData.season}.`;
   el.seasonalInfoBox.hidden = false;
+}
+
+// ---------- Meal plan + grocery list ---------------------------------------
+
+function groceryCheckedKey() {
+  return `foodie_grocery_checked_${state.household}`;
+}
+
+function getCheckedIngredients() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(groceryCheckedKey()) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function setIngredientChecked(name, checked) {
+  const checkedSet = getCheckedIngredients();
+  if (checked) checkedSet.add(name);
+  else checkedSet.delete(name);
+  try {
+    localStorage.setItem(groceryCheckedKey(), JSON.stringify([...checkedSet]));
+  } catch {
+    // localStorage unavailable (private browsing, etc.) -- checkbox state just won't persist
+  }
+}
+
+async function addToPlan(recipeId) {
+  if (!state.household) {
+    el.householdStatus.textContent = 'Pick a household first to start a meal plan';
+    return;
+  }
+  const data = await fetchJson(`/api/households/${encodeURIComponent(state.household)}/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipeId }),
+  });
+  state.planned = data.planned;
+  await loadGroceryList();
+}
+
+async function removeFromPlan(recipeId) {
+  const data = await fetchJson(
+    `/api/households/${encodeURIComponent(state.household)}/plan/${recipeId}`,
+    { method: 'DELETE' }
+  );
+  state.planned = data.planned;
+  await loadGroceryList();
+}
+
+async function loadGroceryList() {
+  if (!state.household) return;
+  const { recipes, items } = await fetchJson(
+    `/api/households/${encodeURIComponent(state.household)}/grocery-list`
+  );
+  renderPlannedList(recipes);
+  renderGroceryList(items);
+}
+
+function renderPlannedList(recipes) {
+  el.plannedList.innerHTML = '';
+  el.planEmptyState.hidden = recipes.length > 0;
+
+  for (const recipe of recipes) {
+    const chip = document.createElement('span');
+    chip.className = 'planned-chip';
+    chip.textContent = recipe.name;
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = '✕';
+    removeBtn.setAttribute('aria-label', `Remove ${recipe.name} from plan`);
+    removeBtn.addEventListener('click', () => removeFromPlan(recipe.id));
+    chip.appendChild(removeBtn);
+    el.plannedList.appendChild(chip);
+  }
+}
+
+function renderGroceryList(items) {
+  el.groceryList.innerHTML = '';
+  el.groceryListWrap.hidden = items.length === 0;
+  const checkedSet = getCheckedIngredients();
+
+  for (const item of items) {
+    const li = document.createElement('li');
+    const key = item.ingredient.toLowerCase();
+    if (checkedSet.has(key)) li.classList.add('checked');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = checkedSet.has(key);
+    checkbox.addEventListener('change', () => {
+      li.classList.toggle('checked', checkbox.checked);
+      setIngredientChecked(key, checkbox.checked);
+    });
+    li.appendChild(checkbox);
+
+    const label = document.createElement('div');
+    const name = document.createElement('span');
+    name.className = 'grocery-item-name';
+    name.textContent = item.ingredient;
+    label.appendChild(name);
+
+    const detail = document.createElement('span');
+    detail.className = 'grocery-item-detail';
+    detail.textContent = item.entries
+      .map((e) => (e.measure ? `${e.measure} (${e.recipe})` : e.recipe))
+      .join(', ');
+    label.appendChild(detail);
+
+    li.appendChild(label);
+    el.groceryList.appendChild(li);
+  }
+}
+
+function createAddToPlanButton(recipeId) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  const isPlanned = state.planned.includes(recipeId);
+  btn.className = 'add-to-plan-btn' + (isPlanned ? ' added' : '');
+  btn.textContent = isPlanned ? '✓ Planned' : '+ Add to plan';
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (state.planned.includes(recipeId)) {
+      await removeFromPlan(recipeId);
+    } else {
+      await addToPlan(recipeId);
+    }
+    btn.className = 'add-to-plan-btn' + (state.planned.includes(recipeId) ? ' added' : '');
+    btn.textContent = state.planned.includes(recipeId) ? '✓ Planned' : '+ Add to plan';
+  });
+  return btn;
 }
 
 // ---------- Wire up --------------------------------------------------------

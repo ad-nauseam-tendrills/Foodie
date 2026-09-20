@@ -123,6 +123,23 @@ save them to a household -- that's what `PUT .../preferences` below does.
 They reload automatically next time that household name is used, on any
 device.
 
+## Meal planning + grocery list
+
+Every recipe card (and the detail view) has an "Add to plan" button. The
+plan is just a list of recipe IDs saved on the household, the same way
+liked/disliked ingredients and cooked history are -- so it syncs across
+every device using that household name.
+
+The grocery list is generated fresh from the current plan on every load,
+not stored separately, so it can never drift out of sync with the plan.
+Ingredients are merged across recipes (two recipes both needing garlic
+show up as one line, noting both), but quantities aren't summed -- "1 lb"
+and "2 cups" don't have a sane way to combine automatically, so each
+recipe's amount is listed rather than guessed at. Checking items off is
+saved to that browser's `localStorage` only (a personal, per-device
+thing while you're actually walking the store), not synced to the
+household like the plan itself is.
+
 ## API
 
 | Endpoint | Purpose |
@@ -136,6 +153,9 @@ device.
 | `POST /api/households` | Create/fetch a household by name |
 | `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (permanent exclusions) |
 | `POST /api/households/:name/cooked` | Log a recipe as cooked (keeps suggestions from repeating) |
+| `POST /api/households/:name/plan` | Add a recipe to the meal plan |
+| `DELETE /api/households/:name/plan/:recipeId` | Remove a recipe from the meal plan |
+| `GET /api/households/:name/grocery-list` | Combined ingredient list for the current plan |
 
 ## Roadmap / ideas not built yet
 

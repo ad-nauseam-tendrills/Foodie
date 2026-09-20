@@ -52,6 +52,7 @@ db.exec(`
     liked_ingredients TEXT NOT NULL DEFAULT '[]',
     disliked_ingredients TEXT NOT NULL DEFAULT '[]',
     cooked_log TEXT NOT NULL DEFAULT '[]',
+    planned_recipes TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -59,14 +60,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_ingredient ON recipe_ingredients(ingredient_id);
 `);
 
-// Migration for databases created before the `tags` column existed --
+// Migrations for databases created before these columns existed --
 // CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so an
-// already-seeded database needs the column added explicitly.
-const hasTagsColumn = db
-  .prepare(`SELECT 1 FROM pragma_table_info('recipes') WHERE name = 'tags'`)
-  .get();
-if (!hasTagsColumn) {
-  db.exec(`ALTER TABLE recipes ADD COLUMN tags TEXT`);
+// already-seeded database needs each column added explicitly.
+function addColumnIfMissing(table, column, definition) {
+  const exists = db
+    .prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`)
+    .get(table, column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
+
+addColumnIfMissing('recipes', 'tags', 'TEXT');
+addColumnIfMissing('households', 'planned_recipes', `TEXT NOT NULL DEFAULT '[]'`);
 
 module.exports = db;

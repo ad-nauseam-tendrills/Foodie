@@ -213,6 +213,77 @@ input[type="text"] {
   color: var(--text);
 }
 
+.planned-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.planned-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #f1e6da;
+  border-radius: 999px;
+  padding: 0.3rem 0.5rem 0.3rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+.planned-chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0 0.3rem;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.grocery-list-wrap { margin-top: 1.5rem; }
+.grocery-list-wrap h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+
+.grocery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.grocery-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.grocery-list li.checked .grocery-item-name,
+.grocery-list li.checked .grocery-item-detail {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.grocery-list input[type="checkbox"] { margin-top: 0.2rem; }
+
+.grocery-item-name { font-weight: 600; }
+.grocery-item-detail { font-size: 0.78rem; color: var(--muted); display: block; }
+
+.add-to-plan-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.add-to-plan-btn:hover { border-color: var(--accent); color: var(--accent); }
+.add-to-plan-btn.added { border-color: var(--good); color: var(--good); }
+
 button {
   font: inherit;
   border-radius: 6px;
