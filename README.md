@@ -75,18 +75,33 @@ recipe app — this is the whole point.
    ```bash
    docker compose exec foodie npm run seed
    ```
-5. Visit `http://<your-droplet-ip>:3000`.
+5. The container only listens on `127.0.0.1:3001` (see `docker-compose.yml`)
+   — it's not reachable from outside the droplet on its own. That's
+   deliberate: put a reverse proxy in front of it (next section), the
+   same way you would for any other app sharing the box.
 
 The `data/` folder is mounted as a volume, so the database survives
 container restarts/upgrades. Back it up like any file — it's the entire
 app's state.
 
-### Putting it behind a domain + HTTPS (optional but recommended)
+### Putting it behind a domain + HTTPS
 
-Put a reverse proxy in front of it — [Caddy](https://caddyserver.com/) is
-the least fuss (automatic HTTPS from a `Caddyfile` with just your domain
-name and `reverse_proxy localhost:3000`). Nginx + certbot works too if
-you'd rather.
+If nginx is already fronting other apps on this droplet, add Foodie as
+one more site rather than reaching for a second reverse proxy:
+
+```bash
+sudo cp deploy/nginx-site.conf.example /etc/nginx/sites-available/foodie
+sudo sed -i 's/foodie.edgarbustos.art/your-domain-here/g' /etc/nginx/sites-available/foodie
+sudo ln -s /etc/nginx/sites-available/foodie /etc/nginx/sites-enabled/foodie
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d your-domain-here   # provisions TLS, rewrites the file with a 443 block
+```
+
+Starting fresh with nothing else on the box? [Caddy](https://caddyserver.com/)
+is less setup (automatic HTTPS from a `Caddyfile` with just your domain
+name and `reverse_proxy localhost:3001`).
+
+Either way, point an A record for your domain at the droplet's IP first.
 
 ## API
 

@@ -4,7 +4,10 @@ services:
     container_name: foodie
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Loopback-only, like every other app container on this host --
+      # nginx is what actually faces the internet. Host port 3001 because
+      # 3000 is already taken on this box.
+      - "127.0.0.1:3001:3000"
     volumes:
       - ./data:/app/data
     environment:
