@@ -85,12 +85,23 @@ addColumnIfMissing('households', 'pantry_ingredients', `TEXT NOT NULL DEFAULT '[
 function mergeDuplicateIngredients() {
   const rows = db.prepare(`SELECT id, name FROM ingredients`).all();
 
-  // Group existing rows by their canonical name.
-  const groups = new Map();
+  // Group existing rows by their canonical name -- keyed lower-case,
+  // since the table enforces uniqueness case-insensitively (COLLATE
+  // NOCASE) but plain string equality doesn't. Without this, "carrot"
+  // and an alias-derived "Carrot" landed in two different single-row
+  // "groups" here, and renaming one to match the other's case then blew
+  // up against the database's own case-insensitive constraint.
+  const groups = new Map(); // lowercase canonical -> { displayName, rows }
   for (const row of rows) {
     const canonical = canonicalizeIngredientName(row.name);
-    if (!groups.has(canonical)) groups.set(canonical, []);
-    groups.get(canonical).push(row);
+    const key = canonical.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { displayName: canonical, rows: [] });
+    const group = groups.get(key);
+    group.rows.push(row);
+    // An alias firing (canonical form differs from the row's own name)
+    // is a stronger signal for the "right" spelling than just whichever
+    // row happened to be grouped first.
+    if (canonical !== row.name) group.displayName = canonical;
   }
 
   const getLinksStmt = db.prepare(`SELECT recipe_id, measure FROM recipe_ingredients WHERE ingredient_id = ?`);
@@ -106,21 +117,21 @@ function mergeDuplicateIngredients() {
   const renameStmt = db.prepare(`UPDATE ingredients SET name = ? WHERE id = ?`);
   const deleteIngredientStmt = db.prepare(`DELETE FROM ingredients WHERE id = ?`);
 
-  for (const [canonical, group] of groups) {
+  for (const { displayName, rows: group } of groups.values()) {
     if (group.length < 2) {
       // Lone row -- just make sure its spelling matches the canonical
       // form (e.g. it was inserted before an alias for it existed).
-      if (group.length === 1 && group[0].name !== canonical) {
-        renameStmt.run(canonical, group[0].id);
+      if (group.length === 1 && group[0].name !== displayName) {
+        renameStmt.run(displayName, group[0].id);
       }
       continue;
     }
 
     // Prefer an existing row that's already spelled exactly right as the
     // keeper; otherwise take the first and rename it.
-    const exact = group.find((r) => r.name === canonical);
+    const exact = group.find((r) => r.name === displayName);
     const keeper = exact || group[0];
-    if (keeper.name !== canonical) renameStmt.run(canonical, keeper.id);
+    if (keeper.name !== displayName) renameStmt.run(displayName, keeper.id);
 
     for (const dup of group) {
       if (dup.id === keeper.id) continue;
