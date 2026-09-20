@@ -58,6 +58,14 @@ app.get('/api/categories', (req, res) => {
   res.json(rows.map((r) => r.category));
 });
 
+// Areas are cuisine/region (American, Chilean, German, Italian, ...).
+app.get('/api/areas', (req, res) => {
+  const rows = db
+    .prepare(`SELECT DISTINCT area FROM recipes WHERE area IS NOT NULL AND area != '' ORDER BY area`)
+    .all();
+  res.json(rows.map((r) => r.area));
+});
+
 // Tags are finer-grained and freeform (Soup, Curry, Spicy, ...) -- this
 // is what makes "just show me soups" possible even though Soup isn't a
 // category of its own.
@@ -93,6 +101,7 @@ app.get('/api/recipes/match', (req, res) => {
   const exclude = parseList(req.query.exclude);
   const category = String(req.query.category || '').trim() || null;
   const tag = String(req.query.tag || '').trim() || null;
+  const area = String(req.query.area || '').trim() || null;
   const seasonalOnly = req.query.seasonal === 'true';
 
   let recentRecipeIds = new Set();
@@ -118,6 +127,7 @@ app.get('/api/recipes/match', (req, res) => {
     recentRecipeIds,
     category,
     tag,
+    area,
     seasonalKeywords,
     seasonalOnly,
   });

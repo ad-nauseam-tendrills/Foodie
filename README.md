@@ -59,20 +59,26 @@ npm start          # serves the app on http://localhost:3000
 
 - **TheMealDB** (`npm run seed`) — the main catalog, ~300 recipes, free
   and open at the point of access. Skews international/pub-style.
-- **Curated American classics** (`npm run seed:american`,
-  `server/data/american-recipes.js`) — a short, hand-picked list filling
-  the specific gap above: chicken noodle soup, meatloaf, pot roast,
-  chicken and biscuits, and similar home-cooking staples that TheMealDB
-  is thin on. This is deliberately *not* a bulk import from a larger
-  dataset (RecipeNLG, Food.com, etc.) — those are scraped/user-submitted
-  collections with heavy near-duplicate bloat (dozens of near-identical
-  "chicken noodle soup" entries differing only in, say, egg noodles vs.
-  pasta) and inconsistent categorization that would undermine the
-  category/tag filters. If a specific dish is missing, add it by hand to
-  the data file and re-run the seed — it upserts by a stable slug, so
-  editing an existing entry updates it in place rather than duplicating it.
-- Both seeds share upsert logic in `server/seed/lib.js`, and either can
-  be re-run any time to refresh/edit without re-running the other.
+- **Curated cuisine sets** (`npm run seed:curated`,
+  `server/data/curated/*.js`) — short, hand-picked lists filling specific
+  gaps TheMealDB has: `american.js` (chicken noodle soup, meatloaf, pot
+  roast, chicken and biscuits, ...), `chilean.js` (cazuela, pastel de
+  choclo, empanadas de pino, porotos granados, ...), `german.js`
+  (sauerbraten, schnitzel, rouladen, käsespätzle, ...). This is
+  deliberately *not* a bulk import from a larger dataset (RecipeNLG,
+  Food.com, etc.) — those are scraped/user-submitted collections with
+  heavy near-duplicate bloat (dozens of near-identical "chicken noodle
+  soup" entries differing only in, say, egg noodles vs. pasta) and
+  inconsistent categorization that would undermine the category/cuisine/
+  tag filters.
+  - Missing a specific dish? Add it by hand to the relevant file (or a
+    new one, for a cuisine that doesn't have a file yet — every `.js` in
+    `server/data/curated/` is picked up automatically). Each entry
+    upserts by a stable slug (its `id`), so editing an existing one and
+    re-running the seed updates it in place rather than duplicating it.
+- All seeds share upsert logic in `server/seed/lib.js`. `npm run
+  seed:all` runs both TheMealDB and the curated sets; either can also be
+  re-run alone any time to refresh/edit without touching the other.
 
 ## Deploying to a DigitalOcean droplet
 
@@ -123,14 +129,18 @@ name and `reverse_proxy localhost:3001`).
 
 Either way, point an A record for your domain at the droplet's IP first.
 
-## Filtering: category, tags, and season
+## Filtering: category, cuisine, tags, and season
 
-- **Category** narrows to a broad group TheMealDB assigns (Chicken, Seafood,
-  Dessert, Vegetarian, ...) -- this is what separates dessert from dinner.
+- **Category** narrows to a broad group (Chicken, Seafood, Dessert,
+  Vegetarian, Soup, ...) -- this is what separates dessert from dinner.
+- **Cuisine** (`area` in the API/database, matching TheMealDB's own field
+  name) narrows to a region -- American, Chilean, German, Italian, and
+  whatever else TheMealDB's international catalog and the curated set
+  (below) bring in.
 - **Tags** are finer-grained and freeform (Soup, Curry, Stew, ...) -- this
   is what makes "just soups" possible even though Soup isn't a category of
-  its own. Existing recipes need a re-seed (`npm run seed`) to backfill
-  tags, since TheMealDB's tag field wasn't captured before this.
+  its own. Existing TheMealDB recipes need a re-seed (`npm run seed`) to
+  backfill tags, since that field wasn't captured before this.
 - **Seasonal** is a static, hand-curated Northeastern US harvest calendar
   (`server/data/seasonal.js`), not anything location-aware -- there's no
   free API for "what's actually in season near me" by exact location. It
@@ -166,9 +176,10 @@ household like the plan itself is.
 |---|---|
 | `GET /api/ingredients?q=` | Autocomplete over known ingredient names |
 | `GET /api/categories` | Distinct recipe categories |
+| `GET /api/areas` | Distinct cuisines/regions |
 | `GET /api/tags` | Distinct recipe tags |
 | `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) |
-| `GET /api/recipes/match?have=a,b&exclude=c&household=name&category=&tag=&seasonal=true` | Ranked recipe matches |
+| `GET /api/recipes/match?have=a,b&exclude=c&household=name&category=&area=&tag=&seasonal=true` | Ranked recipe matches |
 | `GET /api/recipes/:id` | Full recipe detail |
 | `POST /api/households` | Create/fetch a household by name |
 | `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (permanent exclusions) |

@@ -7,13 +7,16 @@
 // Deliberately NOT a bulk scrape: one solid version of each dish, chosen
 // by hand, rather than thousands of near-duplicate variants. Add more
 // entries here any time a specific dish is missing -- that's the whole
-// point of keeping this curated instead of imported in bulk.
+// point of keeping this curated instead of imported in bulk. Every file
+// in this directory is picked up automatically by
+// server/seed/seed-curated.js -- see that file for the shape each one
+// needs to export.
 //
 // `id` is a stable slug used as the external_id for upserts, so editing
 // a recipe here and re-running the seed updates it in place rather than
 // creating a duplicate.
 
-const AMERICAN_RECIPES = [
+const RECIPES = [
   {
     id: 'american-chicken-noodle-soup',
     name: 'Chicken Noodle Soup',
@@ -468,4 +471,4 @@ const AMERICAN_RECIPES = [
   },
 ];
 
-module.exports = { AMERICAN_RECIPES };
+module.exports = { area: 'American', recipes: RECIPES };

@@ -26,6 +26,7 @@ const el = {
   modalBody: document.getElementById('modalBody'),
   modalClose: document.getElementById('modalClose'),
   categorySelect: document.getElementById('categorySelect'),
+  areaSelect: document.getElementById('areaSelect'),
   tagInput: document.getElementById('tagInput'),
   tagOptions: document.getElementById('tagOptions'),
   seasonalToggle: document.getElementById('seasonalToggle'),
@@ -185,6 +186,8 @@ async function findDinner() {
   const householdParam = state.household ? `&household=${encodeURIComponent(state.household)}` : '';
   const category = el.categorySelect.value;
   const categoryParam = category ? `&category=${encodeURIComponent(category)}` : '';
+  const area = el.areaSelect.value;
+  const areaParam = area ? `&area=${encodeURIComponent(area)}` : '';
   const tag = el.tagInput.value.trim();
   const tagParam = tag ? `&tag=${encodeURIComponent(tag)}` : '';
   const seasonalParam = el.seasonalToggle.checked ? `&seasonal=true` : '';
@@ -192,7 +195,7 @@ async function findDinner() {
 
   const recipes = await fetchJson(
     `/api/recipes/match?have=${encodeURIComponent(have)}&exclude=${encodeURIComponent(exclude)}` +
-      `${householdParam}${categoryParam}${tagParam}${seasonalParam}`
+      `${householdParam}${categoryParam}${areaParam}${tagParam}${seasonalParam}`
   );
 
   el.resultsCount.textContent = recipes.length ? `${recipes.length} matches` : '';
@@ -231,10 +234,10 @@ function renderRecipeCard(recipe) {
   title.textContent = recipe.name;
   body.appendChild(title);
 
-  if (recipe.category || (recipe.tags && recipe.tags.length)) {
+  if (recipe.category || recipe.area || (recipe.tags && recipe.tags.length)) {
     const meta = document.createElement('p');
     meta.className = 'card-meta-line';
-    meta.textContent = [recipe.category, ...(recipe.tags || [])].filter(Boolean).join(' • ');
+    meta.textContent = [recipe.category, recipe.area, ...(recipe.tags || [])].filter(Boolean).join(' • ');
     body.appendChild(meta);
   }
 
@@ -338,7 +341,7 @@ function closeModal() {
   el.modalBody.innerHTML = '';
 }
 
-// ---------- Filters: category, tag, seasonal -------------------------------
+// ---------- Filters: category, area, tag, seasonal --------------------------
 
 async function loadCategories() {
   const categories = await fetchJson('/api/categories');
@@ -347,6 +350,16 @@ async function loadCategories() {
     option.value = category;
     option.textContent = category;
     el.categorySelect.appendChild(option);
+  }
+}
+
+async function loadAreas() {
+  const areas = await fetchJson('/api/areas');
+  for (const area of areas) {
+    const option = document.createElement('option');
+    option.value = area;
+    option.textContent = area;
+    el.areaSelect.appendChild(option);
   }
 }
 
@@ -543,6 +556,7 @@ el.seasonalInfoBtn.addEventListener('click', toggleSeasonalInfo);
 
 (async function init() {
   loadCategories().catch(() => {});
+  loadAreas().catch(() => {});
   loadTags().catch(() => {});
   loadSeasonal().catch(() => {});
 

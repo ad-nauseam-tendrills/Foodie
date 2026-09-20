@@ -33,7 +33,7 @@ function parseTags(tagsField) {
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {{
  *   have?: string[], exclude?: string[], recentRecipeIds?: Set<number>, limit?: number,
- *   category?: string, tag?: string,
+ *   category?: string, tag?: string, area?: string,
  *   seasonalKeywords?: string[], seasonalOnly?: boolean,
  * }} opts
  */
@@ -44,6 +44,7 @@ function matchRecipes(db, opts = {}) {
   const limit = opts.limit || 30;
   const category = opts.category ? normalize(opts.category) : null;
   const tag = opts.tag ? normalize(opts.tag) : null;
+  const area = opts.area ? normalize(opts.area) : null;
   const seasonalKeywords = opts.seasonalKeywords || null;
   const seasonalOnly = !!opts.seasonalOnly;
 
@@ -58,6 +59,7 @@ function matchRecipes(db, opts = {}) {
   const results = [];
   for (const recipe of recipes) {
     if (category && normalize(recipe.category) !== category) continue;
+    if (area && normalize(recipe.area) !== area) continue;
 
     const recipeTags = parseTags(recipe.tags);
     if (tag && !recipeTags.some((t) => normalize(t).includes(tag))) continue;
