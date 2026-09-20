@@ -116,23 +116,42 @@ function mergeDuplicateIngredients() {
   );
   const renameStmt = db.prepare(`UPDATE ingredients SET name = ? WHERE id = ?`);
   const deleteIngredientStmt = db.prepare(`DELETE FROM ingredients WHERE id = ?`);
+  const collisionStmt = db.prepare(`SELECT id FROM ingredients WHERE name = ? COLLATE NOCASE AND id != ?`);
+
+  // Renaming a row to its "proper" spelling is a cosmetic cleanup, not
+  // something worth crashing server startup over if some data pattern
+  // this function's author didn't anticipate makes it collide anyway --
+  // it already crashed production twice on edge cases two rounds of
+  // testing missed. Check for a collision first and just skip that one
+  // rename (leaving the row's current spelling) rather than let it throw.
+  function safeRename(id, currentName, targetName) {
+    if (currentName === targetName) return;
+    if (collisionStmt.get(targetName, id)) {
+      console.warn(
+        `[ingredient-merge] skipping rename of ingredient #${id} "${currentName}" -> "${targetName}" ` +
+          `(another row already has that name) -- leaving as-is`
+      );
+      return;
+    }
+    renameStmt.run(targetName, id);
+  }
 
   for (const { displayName, rows: group } of groups.values()) {
     if (group.length < 2) {
       // Lone row -- just make sure its spelling matches the canonical
       // form (e.g. it was inserted before an alias for it existed).
-      if (group.length === 1 && group[0].name !== displayName) {
-        renameStmt.run(displayName, group[0].id);
-      }
+      if (group.length === 1) safeRename(group[0].id, group[0].name, displayName);
       continue;
     }
 
     // Prefer an existing row that's already spelled exactly right as the
-    // keeper; otherwise take the first and rename it.
+    // keeper; otherwise take the first.
     const exact = group.find((r) => r.name === displayName);
     const keeper = exact || group[0];
-    if (keeper.name !== displayName) renameStmt.run(displayName, keeper.id);
 
+    // Merge every other row into the keeper BEFORE renaming it -- once
+    // they're gone, nothing in this group can still collide with the
+    // keeper's target name.
     for (const dup of group) {
       if (dup.id === keeper.id) continue;
       for (const link of getLinksStmt.all(dup.id)) {
@@ -147,6 +166,8 @@ function mergeDuplicateIngredients() {
       }
       deleteIngredientStmt.run(dup.id);
     }
+
+    safeRename(keeper.id, keeper.name, displayName);
   }
 }
 
