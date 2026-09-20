@@ -10,7 +10,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(
+  express.static(path.join(__dirname, '..', 'public'), {
+    // Without this, browsers can keep serving a cached app.js/styles.css
+    // after a deploy until the user manually hard-refreshes -- "no-cache"
+    // doesn't mean "don't cache", it means "always ask the server first"
+    // (a fast 304 when unchanged, fresh content immediately when not).
+    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+  })
+);
 
 function parseList(value) {
   return String(value || '')

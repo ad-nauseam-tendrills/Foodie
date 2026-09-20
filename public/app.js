@@ -122,6 +122,18 @@ async function fetchJson(url, options) {
 
 // ---------- Household ----------------------------------------------------
 
+// Used anywhere an action silently needs a household first (add to plan,
+// save preferences, ...) -- a status line alone is too easy to miss, so
+// this also pulls the eye to where to actually fix it.
+function warnNoHousehold(message) {
+  el.householdStatus.textContent = message;
+  el.householdStatus.classList.add('warn');
+  el.householdInput.classList.add('warn');
+  el.householdInput.focus();
+  el.householdInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => el.householdInput.classList.remove('warn'), 2000);
+}
+
 async function joinHousehold(name) {
   if (!name) return;
   const data = await fetchJson('/api/households', {
@@ -135,6 +147,7 @@ async function joinHousehold(name) {
   state.planned = data.planned || [];
   localStorage.setItem('foodie_household', data.name);
   el.householdStatus.textContent = `Synced as "${data.name}"`;
+  el.householdStatus.classList.remove('warn');
   renderTags(state.liked, el.likeTags, 'like');
   renderTags(state.disliked, el.dislikeTags, 'dislike');
   renderSavedExclusionsLine();
@@ -152,7 +165,7 @@ function renderSavedExclusionsLine() {
 
 async function savePreferences() {
   if (!state.household) {
-    el.householdStatus.textContent = 'Pick a household name first';
+    warnNoHousehold('Pick a household name first');
     return;
   }
   await fetchJson(`/api/households/${encodeURIComponent(state.household)}/preferences`, {
@@ -394,7 +407,7 @@ function setIngredientChecked(name, checked) {
 
 async function addToPlan(recipeId) {
   if (!state.household) {
-    el.householdStatus.textContent = 'Pick a household first to start a meal plan';
+    warnNoHousehold('Pick a household first to start a meal plan');
     return;
   }
   const data = await fetchJson(`/api/households/${encodeURIComponent(state.household)}/plan`, {

@@ -42,6 +42,12 @@ body {
 }
 
 .household-status { font-size: 0.85rem; color: var(--muted); }
+.household-status.warn { color: var(--bad); font-weight: 600; }
+
+#householdInput.warn {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 2px rgba(179, 71, 71, 0.2);
+}
 
 main {
   max-width: 900px;
