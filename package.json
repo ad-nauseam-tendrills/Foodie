@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "seed": "node server/seed/seed.js"
+    "seed": "node server/seed/seed.js",
+    "seed:american": "node server/seed/seed-american.js",
+    "seed:all": "npm run seed && npm run seed:american"
   },
   "dependencies": {
     "express": "^4.19.2"

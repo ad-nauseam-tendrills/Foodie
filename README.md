@@ -45,14 +45,34 @@ Requires Node.js **22.5+** (for built-in SQLite support).
 
 ```bash
 npm install
-npm run seed     # one-time: pulls ~300 recipes from TheMealDB into data/foodie.db
-npm start        # serves the app on http://localhost:3000
+npm run seed:all   # one-time: TheMealDB (~300 recipes) + curated American classics
+npm start          # serves the app on http://localhost:3000
 ```
 
-> The seed script needs normal outbound internet access to
+> `npm run seed` needs normal outbound internet access to
 > `themealdb.com`. Run it wherever the app will actually live (your
 > droplet, your own machine) — some sandboxed dev environments restrict
-> outbound network access and will block it.
+> outbound network access and will block it. `npm run seed:american`
+> (below) needs no network at all.
+
+## Recipe sources
+
+- **TheMealDB** (`npm run seed`) — the main catalog, ~300 recipes, free
+  and open at the point of access. Skews international/pub-style.
+- **Curated American classics** (`npm run seed:american`,
+  `server/data/american-recipes.js`) — a short, hand-picked list filling
+  the specific gap above: chicken noodle soup, meatloaf, pot roast,
+  chicken and biscuits, and similar home-cooking staples that TheMealDB
+  is thin on. This is deliberately *not* a bulk import from a larger
+  dataset (RecipeNLG, Food.com, etc.) — those are scraped/user-submitted
+  collections with heavy near-duplicate bloat (dozens of near-identical
+  "chicken noodle soup" entries differing only in, say, egg noodles vs.
+  pasta) and inconsistent categorization that would undermine the
+  category/tag filters. If a specific dish is missing, add it by hand to
+  the data file and re-run the seed — it upserts by a stable slug, so
+  editing an existing entry updates it in place rather than duplicating it.
+- Both seeds share upsert logic in `server/seed/lib.js`, and either can
+  be re-run any time to refresh/edit without re-running the other.
 
 ## Deploying to a DigitalOcean droplet
 

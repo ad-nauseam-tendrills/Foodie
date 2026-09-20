@@ -99,14 +99,17 @@ function matchRecipes(db, opts = {}) {
   results.sort((a, b) => {
     // Nudge recently-cooked meals down so the list doesn't repeat itself.
     if (a.recentlyCooked !== b.recentlyCooked) return a.recentlyCooked ? 1 : -1;
-    // When seasonality is in play, break ties toward recipes that use
-    // something actually in season right now.
+    // Actual ingredient match always outranks seasonality -- a recipe
+    // using zero of what you have shouldn't jump ahead of one that
+    // matches just because it also happens to contain something
+    // seasonal. Seasonal only breaks ties between equally-good matches
+    // (including the no-filter browse case, where everything is 0%).
+    if (b.matchPct !== a.matchPct) return b.matchPct - a.matchPct;
     if (seasonalKeywords) {
       const aSeasonal = a.seasonalIngredients.length > 0;
       const bSeasonal = b.seasonalIngredients.length > 0;
       if (aSeasonal !== bSeasonal) return aSeasonal ? -1 : 1;
     }
-    if (b.matchPct !== a.matchPct) return b.matchPct - a.matchPct;
     return a.missingIngredients.length - b.missingIngredients.length;
   });
 

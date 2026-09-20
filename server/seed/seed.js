@@ -16,6 +16,7 @@
 // access, which a sandboxed dev/build environment may not have.
 
 const db = require('../db');
+const { upsertRecipe } = require('./lib');
 
 const BASE_URL = 'https://www.themealdb.com/api/json/v1/1';
 const LETTERS_AND_DIGITS = 'abcdefghijklmnopqrstuvwxyz0123456789'.split('');
@@ -25,57 +26,30 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getOrCreateIngredientId(name) {
-  const clean = name.trim();
-  db.prepare(`INSERT OR IGNORE INTO ingredients (name) VALUES (?)`).run(clean);
-  return db.prepare(`SELECT id FROM ingredients WHERE name = ? COLLATE NOCASE`).get(clean).id;
-}
-
-const insertRecipeStmt = db.prepare(`
-  INSERT INTO recipes (external_id, name, category, area, instructions, image_url, source_url, source, tags)
-  VALUES (@external_id, @name, @category, @area, @instructions, @image_url, @source_url, 'TheMealDB', @tags)
-  ON CONFLICT(external_id) DO UPDATE SET
-    name = excluded.name,
-    category = excluded.category,
-    area = excluded.area,
-    instructions = excluded.instructions,
-    image_url = excluded.image_url,
-    source_url = excluded.source_url,
-    tags = excluded.tags
-`);
-const getRecipeIdStmt = db.prepare(`SELECT id FROM recipes WHERE external_id = ?`);
-const linkIngredientStmt = db.prepare(`
-  INSERT OR IGNORE INTO recipe_ingredients (recipe_id, ingredient_id, measure) VALUES (?, ?, ?)
-`);
-const clearLinksStmt = db.prepare(`DELETE FROM recipe_ingredients WHERE recipe_id = ?`);
-
 function importMeal(meal) {
-  insertRecipeStmt.run({
-    external_id: meal.idMeal,
-    name: meal.strMeal,
-    category: meal.strCategory || null,
-    area: meal.strArea || null,
-    instructions: meal.strInstructions || null,
-    image_url: meal.strMealThumb || null,
-    source_url: meal.strSource || `https://www.themealdb.com/meal/${meal.idMeal}`,
-    // TheMealDB's freeform tags (e.g. "Soup,Curry,Spicy") -- separate
-    // from strCategory, and what makes something like "just soups"
-    // filterable even though "Soup" isn't its own category.
-    tags: meal.strTags || null,
-  });
-  const recipeId = getRecipeIdStmt.get(meal.idMeal).id;
-
-  // Re-importing (e.g. on a refresh run) shouldn't leave stale ingredient
-  // links around if a recipe's ingredient list changed upstream.
-  clearLinksStmt.run(recipeId);
-
+  const ingredients = [];
   for (let i = 1; i <= 20; i++) {
     const ingredientName = meal[`strIngredient${i}`];
     const measure = meal[`strMeasure${i}`];
     if (!ingredientName || !ingredientName.trim()) continue;
-    const ingredientId = getOrCreateIngredientId(ingredientName);
-    linkIngredientStmt.run(recipeId, ingredientId, (measure || '').trim());
+    ingredients.push([ingredientName, measure]);
   }
+
+  upsertRecipe({
+    externalId: meal.idMeal,
+    name: meal.strMeal,
+    category: meal.strCategory,
+    area: meal.strArea,
+    instructions: meal.strInstructions,
+    imageUrl: meal.strMealThumb,
+    sourceUrl: meal.strSource || `https://www.themealdb.com/meal/${meal.idMeal}`,
+    source: 'TheMealDB',
+    // TheMealDB's freeform tags (e.g. "Soup,Curry,Spicy") -- separate
+    // from strCategory, and what makes something like "just soups"
+    // filterable even though "Soup" isn't its own category.
+    tags: meal.strTags,
+    ingredients,
+  });
 }
 
 async function seedByLetter(letter) {
@@ -113,4 +87,6 @@ async function seedByLetter(letter) {
   console.log(`\nDone. ${recipeCount} recipes, ${ingredientCount} distinct ingredients in the local database.`);
   console.log('Attribution: recipe data courtesy of TheMealDB (themealdb.com), used under its free-tier API terms.');
   console.log('Your app now runs entirely from the local database file -- no further calls to TheMealDB are needed.');
+  console.log('\nTip: TheMealDB is thin on classic American home cooking -- run `npm run seed:american`');
+  console.log('to add a small hand-curated set (chicken noodle soup, meatloaf, pot roast, ...).');
 })();
