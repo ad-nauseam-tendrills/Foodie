@@ -16,15 +16,19 @@
 //     category: string,        // TheMealDB-style grouping (Beef, Dessert, Soup, ...)
 //     tags: string,             // comma-separated, freeform (e.g. "Soup,Comfort Food")
 //     instructions: string,
+//     imageFile: string,       // optional: a Wikimedia Commons filename (see commons-image.js)
 //     ingredients: Array<[name, measure]>,
 //   }
 //
-// No network access needed -- this is entirely local data.
+// No network access needed -- this is entirely local data (imageFile
+// just builds a URL to an already-hosted Commons file; nothing is
+// fetched or verified at seed time).
 
 const fs = require('node:fs');
 const path = require('node:path');
 const db = require('../db');
 const { upsertRecipe } = require('./lib');
+const { commonsFilePath } = require('../data/commons-image');
 
 const CURATED_DIR = path.join(__dirname, '..', 'data', 'curated');
 
@@ -42,8 +46,10 @@ for (const file of files) {
       category: recipe.category,
       area,
       instructions: recipe.instructions,
-      imageUrl: null,
-      sourceUrl: null,
+      imageUrl: commonsFilePath(recipe.imageFile),
+      sourceUrl: recipe.imageFile
+        ? `https://commons.wikimedia.org/wiki/File:${recipe.imageFile}`
+        : null,
       source: 'Foodie (curated)',
       tags: recipe.tags,
       ingredients: recipe.ingredients,

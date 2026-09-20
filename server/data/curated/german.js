@@ -8,6 +8,7 @@ const RECIPES = [
   {
     id: 'german-sauerbraten',
     name: 'Sauerbraten',
+    imageFile: 'Sauerbraten.jpg',
     category: 'Beef',
     tags: 'Comfort Food,Sunday Dinner',
     instructions:
@@ -33,6 +34,7 @@ const RECIPES = [
   {
     id: 'german-bratwurst-mit-sauerkraut',
     name: 'Bratwurst mit Sauerkraut',
+    imageFile: 'Bratwurst.jpg',
     category: 'Pork',
     tags: 'Comfort Food,Quick',
     instructions:
@@ -53,6 +55,7 @@ const RECIPES = [
   {
     id: 'german-schnitzel',
     name: 'Schnitzel',
+    imageFile: 'Wiener_Schnitzel.jpg',
     category: 'Pork',
     tags: 'Comfort Food,Fried,Quick',
     instructions:
@@ -74,6 +77,7 @@ const RECIPES = [
   {
     id: 'german-kartoffelsalat',
     name: 'German Potato Salad',
+    imageFile: 'Kartoffelsalat.jpg',
     category: 'Side',
     tags: 'Salad,Side',
     instructions:
@@ -97,6 +101,7 @@ const RECIPES = [
   {
     id: 'german-rouladen',
     name: 'Rouladen',
+    imageFile: 'Roulade.JPG',
     category: 'Beef',
     tags: 'Comfort Food,Sunday Dinner',
     instructions:
@@ -121,6 +126,7 @@ const RECIPES = [
   {
     id: 'german-kasespatzle',
     name: 'Käsespätzle',
+    imageFile: 'Käsespätzle.jpg',
     category: 'Vegetarian',
     tags: 'Comfort Food,Casserole',
     instructions:
@@ -140,6 +146,7 @@ const RECIPES = [
   {
     id: 'german-kartoffelpuffer',
     name: 'Kartoffelpuffer (Potato Pancakes)',
+    imageFile: 'Kartoffelpuffer.jpg',
     category: 'Vegetarian',
     tags: 'Fried,Quick,Vegetarian',
     instructions:
@@ -160,6 +167,7 @@ const RECIPES = [
   {
     id: 'german-rotkohl',
     name: 'Rotkohl (Braised Red Cabbage)',
+    imageFile: 'Rindergulasch_Rotkohl_Kloesse_001.JPG',
     category: 'Side',
     tags: 'Side,Vegetarian',
     instructions:
@@ -180,6 +188,7 @@ const RECIPES = [
   {
     id: 'german-linsensuppe',
     name: 'Linsensuppe (Lentil Soup)',
+    imageFile: 'Bowl_of_lentil_soup_with_green_and_red_lentils.jpg',
     category: 'Soup',
     tags: 'Soup,Comfort Food',
     instructions:
@@ -204,6 +213,7 @@ const RECIPES = [
   {
     id: 'german-frikadellen',
     name: 'Frikadellen',
+    imageFile: 'Frikadelle_(28082008).JPG',
     category: 'Beef',
     tags: 'Comfort Food,Quick',
     instructions:
@@ -226,6 +236,7 @@ const RECIPES = [
   {
     id: 'german-black-forest-cake',
     name: 'Black Forest Cake',
+    imageFile: 'Eine_Schwarzwälder_Kirschtorte.jpg',
     category: 'Dessert',
     tags: 'Dessert,Baking',
     instructions:
@@ -245,6 +256,7 @@ const RECIPES = [
   {
     id: 'german-bauernfruhstuck',
     name: 'Bauernfrühstück (Farmer\'s Breakfast)',
+    imageFile: 'Bauernfrühstück-01.jpg',
     category: 'Breakfast',
     tags: 'Breakfast,Quick',
     instructions:

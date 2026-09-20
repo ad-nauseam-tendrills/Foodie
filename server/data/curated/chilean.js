@@ -8,6 +8,7 @@ const RECIPES = [
   {
     id: 'chilean-cazuela',
     name: 'Cazuela',
+    imageFile: 'Chilean_Cazuela.JPG',
     category: 'Beef',
     tags: 'Soup,Comfort Food',
     instructions:
@@ -34,6 +35,7 @@ const RECIPES = [
   {
     id: 'chilean-pastel-de-choclo',
     name: 'Pastel de Choclo',
+    imageFile: 'Pastel_de_choclo_01.JPG',
     category: 'Beef',
     tags: 'Casserole,Baking,Comfort Food',
     instructions:
@@ -63,6 +65,7 @@ const RECIPES = [
   {
     id: 'chilean-empanadas-de-pino',
     name: 'Empanadas de Pino',
+    imageFile: 'Empanadas_chilenas_de_pino.jpg',
     category: 'Beef',
     tags: 'Baking,Snack',
     instructions:
@@ -89,6 +92,7 @@ const RECIPES = [
   {
     id: 'chilean-porotos-granados',
     name: 'Porotos Granados',
+    imageFile: 'Porotos_granados_(Chilean_bean_stew).jpg',
     category: 'Vegetarian',
     tags: 'Stew,Vegetarian',
     instructions:
@@ -115,6 +119,7 @@ const RECIPES = [
   {
     id: 'chilean-charquican',
     name: 'Charquicán',
+    imageFile: 'Charquicán.jpg',
     category: 'Beef',
     tags: 'Stew,Comfort Food',
     instructions:
@@ -142,6 +147,7 @@ const RECIPES = [
   {
     id: 'chilean-chorrillana',
     name: 'Chorrillana',
+    imageFile: 'Chorrillana.jpg',
     category: 'Beef',
     tags: 'Comfort Food,Quick',
     instructions:
@@ -162,6 +168,7 @@ const RECIPES = [
   {
     id: 'chilean-pebre',
     name: 'Pebre',
+    imageFile: 'Pebre_chileno.jpg',
     category: 'Side',
     tags: 'Sauce,Condiment,Vegetarian,Quick',
     instructions:
@@ -205,6 +212,7 @@ const RECIPES = [
   {
     id: 'chilean-sopaipillas',
     name: 'Sopaipillas',
+    imageFile: 'Sopaipillas_chilenas.jpg',
     category: 'Side',
     tags: 'Fried,Snack,Vegetarian',
     instructions:
@@ -224,6 +232,7 @@ const RECIPES = [
   {
     id: 'chilean-leche-asada',
     name: 'Leche Asada',
+    imageFile: 'LecheAsada.jpg',
     category: 'Dessert',
     tags: 'Dessert,Baking',
     instructions:
@@ -242,6 +251,7 @@ const RECIPES = [
   {
     id: 'chilean-completo',
     name: 'Completo',
+    imageFile: 'Completo_italiano.jpg',
     category: 'Starter',
     tags: 'Sandwich,Quick',
     instructions:
@@ -261,6 +271,7 @@ const RECIPES = [
   {
     id: 'chilean-curanto-en-olla',
     name: 'Curanto en Olla (Pot-Cooked Curanto)',
+    imageFile: 'Curanto_al_hoyo.jpg',
     category: 'Seafood',
     tags: 'Stew,Southern Chile,Comfort Food',
     instructions:

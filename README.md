@@ -76,6 +76,13 @@ npm start          # serves the app on http://localhost:3000
     `server/data/curated/` is picked up automatically). Each entry
     upserts by a stable slug (its `id`), so editing an existing one and
     re-running the seed updates it in place rather than duplicating it.
+  - Each entry can set `imageFile` to a Wikimedia Commons filename (e.g.
+    `"Chicken_noodle_soup.jpg"`, copied straight from the file's URL on
+    commons.wikimedia.org) and `server/data/commons-image.js` builds a
+    stable, hotlink-safe URL from it. Not every curated dish has one --
+    a couple didn't have a genuinely matching free photo available, and
+    it's better to leave a recipe without a picture than link a wrong
+    one.
 - All seeds share upsert logic in `server/seed/lib.js`. `npm run
   seed:all` runs both TheMealDB and the curated sets; either can also be
   re-run alone any time to refresh/edit without touching the other.

@@ -20,6 +20,7 @@ const RECIPES = [
   {
     id: 'american-chicken-noodle-soup',
     name: 'Chicken Noodle Soup',
+    imageFile: 'Chicken_noodle_soup.jpg',
     category: 'Soup',
     tags: 'Soup,Comfort Food,Chicken',
     instructions:
@@ -72,6 +73,7 @@ const RECIPES = [
   {
     id: 'american-meatloaf',
     name: 'Classic Meatloaf',
+    imageFile: 'MeatloafWithSauce.jpg',
     category: 'Beef',
     tags: 'Comfort Food,Baking',
     instructions:
@@ -98,6 +100,7 @@ const RECIPES = [
   {
     id: 'american-baked-mac-and-cheese',
     name: 'Baked Mac and Cheese',
+    imageFile: 'Baked_macaroni_and_cheese_close-up.jpg',
     category: 'Vegetarian',
     tags: 'Comfort Food,Casserole,Baking',
     instructions:
@@ -121,6 +124,7 @@ const RECIPES = [
   {
     id: 'american-pot-roast',
     name: 'Sunday Pot Roast',
+    imageFile: 'American_pot_roast.jpg',
     category: 'Beef',
     tags: 'Comfort Food,Sunday Dinner',
     instructions:
@@ -147,6 +151,7 @@ const RECIPES = [
   {
     id: 'american-beef-stew',
     name: 'Hearty Beef Stew',
+    imageFile: 'Beef_stew.jpg',
     category: 'Beef',
     tags: 'Comfort Food,Stew',
     instructions:
@@ -174,6 +179,7 @@ const RECIPES = [
   {
     id: 'american-chili-con-carne',
     name: 'Chili con Carne',
+    imageFile: 'Chili_con_carne_(4431800858).jpg',
     category: 'Beef',
     tags: 'Comfort Food,Spicy',
     instructions:
@@ -198,6 +204,7 @@ const RECIPES = [
   {
     id: 'american-sloppy-joes',
     name: 'Sloppy Joes',
+    imageFile: 'Millburn_Deli_Sloppy_Joes.jpg',
     category: 'Beef',
     tags: 'Comfort Food,Quick',
     instructions:
@@ -222,6 +229,7 @@ const RECIPES = [
   {
     id: 'american-tuna-noodle-casserole',
     name: 'Tuna Noodle Casserole',
+    imageFile: 'Tuna_Casserole2.jpg',
     category: 'Seafood',
     tags: 'Comfort Food,Casserole,Baking',
     instructions:
@@ -244,6 +252,7 @@ const RECIPES = [
   {
     id: 'american-biscuits-and-sausage-gravy',
     name: 'Biscuits and Sausage Gravy',
+    imageFile: 'American_biscuits_and_gravy.jpg',
     category: 'Breakfast',
     tags: 'Comfort Food,Southern',
     instructions:
@@ -263,6 +272,7 @@ const RECIPES = [
   {
     id: 'american-shepherds-pie',
     name: "Shepherd's Pie",
+    imageFile: 'Shepherds_pie.JPG',
     category: 'Beef',
     tags: 'Comfort Food,Casserole,Baking',
     instructions:
@@ -290,6 +300,7 @@ const RECIPES = [
   {
     id: 'american-cornbread',
     name: 'Skillet Cornbread',
+    imageFile: 'Skillet_cornbread.jpg',
     category: 'Side',
     tags: 'Baking,Southern',
     instructions:
@@ -311,6 +322,7 @@ const RECIPES = [
   {
     id: 'american-chicken-pot-pie',
     name: 'Chicken Pot Pie',
+    imageFile: 'Chicken_Pot_Pie.jpg',
     category: 'Chicken',
     tags: 'Comfort Food,Baking',
     instructions:
@@ -337,6 +349,7 @@ const RECIPES = [
   {
     id: 'american-green-bean-casserole',
     name: 'Green Bean Casserole',
+    imageFile: 'Green_bean_casserole.jpg',
     category: 'Side',
     tags: 'Comfort Food,Casserole,Baking,Vegetarian',
     instructions:
@@ -355,6 +368,7 @@ const RECIPES = [
   {
     id: 'american-new-england-clam-chowder',
     name: 'New England Clam Chowder',
+    imageFile: 'Quincy_Market_-_Boston_Chowda_clam_chowder.jpg',
     category: 'Seafood',
     tags: 'Soup,Comfort Food',
     instructions:
@@ -378,6 +392,7 @@ const RECIPES = [
   {
     id: 'american-baked-ziti',
     name: 'Baked Ziti',
+    imageFile: 'Baked_Ziti.jpg',
     category: 'Pasta',
     tags: 'Comfort Food,Casserole,Baking,Italian-American',
     instructions:
@@ -401,6 +416,7 @@ const RECIPES = [
   {
     id: 'american-apple-pie',
     name: 'Classic Apple Pie',
+    imageFile: 'Apple_pie.jpg',
     category: 'Dessert',
     tags: 'Dessert,Baking',
     instructions:
@@ -424,6 +440,7 @@ const RECIPES = [
   {
     id: 'american-buttermilk-pancakes',
     name: 'Buttermilk Pancakes',
+    imageFile: 'Buttermilk_pancakes_from_a_recipe_by_Darina_Allen.jpg',
     category: 'Breakfast',
     tags: 'Breakfast,Quick,Vegetarian',
     instructions:
@@ -446,6 +463,7 @@ const RECIPES = [
   {
     id: 'american-jambalaya',
     name: 'Chicken and Sausage Jambalaya',
+    imageFile: 'Jambalaya.jpg',
     category: 'Chicken',
     tags: 'Comfort Food,Southern,Spicy',
     instructions:
