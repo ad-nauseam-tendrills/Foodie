@@ -59,6 +59,69 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
   CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_ingredient ON recipe_ingredients(ingredient_id);
+
+  -- Real accounts (username + password) scoped to a household, so
+  -- multiple people can share one household's data while each keeping
+  -- their own login -- needed once the app is reachable outside your own
+  -- network, where a passwordless "type any household name" model would
+  -- let anyone read or edit anyone else's household.
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (household_id, username COLLATE NOCASE)
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+  );
+
+  -- Structured pantry inventory -- what a household actually has on
+  -- hand, with quantity/unit/price/store, replacing the old flat
+  -- "pantry_ingredients" name list (still migrated in below).
+  CREATE TABLE IF NOT EXISTS pantry_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+    quantity REAL,
+    unit TEXT,
+    price_paid REAL,
+    store TEXT,
+    added_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    purchased_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (household_id, ingredient_id)
+  );
+
+  -- One row per pantry event (purchased / consumed / wasted) -- the raw
+  -- log that usage metrics, restock suggestions, and per-ingredient price
+  -- history are all computed from, rather than trying to keep running
+  -- totals in sync by hand.
+  CREATE TABLE IF NOT EXISTS usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE SET NULL,
+    recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
+    action TEXT NOT NULL, -- 'purchased' | 'consumed' | 'wasted' | 'cooked'
+    quantity REAL,
+    price REAL,
+    store TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_users_household ON users(household_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_pantry_items_household ON pantry_items(household_id);
+  CREATE INDEX IF NOT EXISTS idx_usage_events_household ON usage_events(household_id);
+  CREATE INDEX IF NOT EXISTS idx_usage_events_ingredient ON usage_events(household_id, ingredient_id);
 `);
 
 // Migrations for databases created before these columns existed --
@@ -172,5 +235,44 @@ function mergeDuplicateIngredients() {
 }
 
 mergeDuplicateIngredients();
+
+// One-time migration: the pantry used to be a flat JSON array of names
+// on the household row (`pantry_ingredients`); it's now the structured
+// `pantry_items` table (quantity/unit/price/store per ingredient).
+// Convert any leftover legacy data into real rows, then clear the old
+// column so this doesn't re-add something a member deliberately removed
+// from the new table on a later startup.
+function migrateLegacyPantry() {
+  const rows = db
+    .prepare(`SELECT id, pantry_ingredients FROM households WHERE pantry_ingredients IS NOT NULL AND pantry_ingredients != '[]'`)
+    .all();
+  if (!rows.length) return;
+
+  const insertIngredient = db.prepare(`INSERT OR IGNORE INTO ingredients (name) VALUES (?)`);
+  const getIngredientId = db.prepare(`SELECT id FROM ingredients WHERE name = ? COLLATE NOCASE`);
+  const insertPantryItem = db.prepare(
+    `INSERT OR IGNORE INTO pantry_items (household_id, ingredient_id) VALUES (?, ?)`
+  );
+  const clearLegacy = db.prepare(`UPDATE households SET pantry_ingredients = '[]' WHERE id = ?`);
+
+  for (const row of rows) {
+    let names;
+    try {
+      names = JSON.parse(row.pantry_ingredients);
+    } catch {
+      names = [];
+    }
+    for (const raw of names) {
+      const clean = canonicalizeIngredientName(raw);
+      if (!clean) continue;
+      insertIngredient.run(clean);
+      const ingredient = getIngredientId.get(clean);
+      if (ingredient) insertPantryItem.run(row.id, ingredient.id);
+    }
+    clearLegacy.run(row.id);
+  }
+}
+
+migrateLegacyPantry();
 
 module.exports = db;

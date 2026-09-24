@@ -9,10 +9,19 @@
 <body>
   <header class="topbar">
     <h1>🍽️ Foodie</h1>
-    <div class="household-bar">
-      <input id="householdInput" type="text" placeholder="Household name (e.g. smiths)" />
-      <button id="householdJoinBtn">Use this household</button>
-      <span id="householdStatus" class="household-status"></span>
+    <div class="auth-bar" id="authBar">
+      <form id="authForm" class="auth-form">
+        <input id="authHousehold" type="text" placeholder="Household name" autocomplete="organization" />
+        <input id="authUsername" type="text" placeholder="Username" autocomplete="username" />
+        <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
+        <button id="authSubmitBtn" type="submit" class="primary">Sign in</button>
+        <button id="authToggleModeBtn" type="button" class="link-btn">Need an account? Create one</button>
+      </form>
+      <div id="authStatus" class="auth-status" hidden>
+        <span id="authStatusText" class="household-status"></span>
+        <button id="signOutBtn" class="secondary">Sign out</button>
+      </div>
+      <p id="authError" class="household-status warn" hidden></p>
     </div>
   </header>
 
@@ -97,9 +106,48 @@
 
       <div id="groceryListWrap" class="grocery-list-wrap" hidden>
         <h3>Grocery list</h3>
-        <p id="pantryLine" class="pantry-line" hidden></p>
+        <p class="muted">Anything already in your pantry below is left off automatically.</p>
         <div id="groceryList" class="grocery-list"></div>
       </div>
+    </section>
+
+    <section class="panel" id="pantryPanel" hidden>
+      <h2>Pantry</h2>
+      <p class="muted">What you actually have on hand -- powers "what can I make right now" below and keeps stocked items off your grocery list.</p>
+      <div class="pantry-add-row">
+        <div class="tag-input" id="pantryIngredientInput" style="flex: 2; min-width: 160px;">
+          <input id="pantryIngredient" type="text" placeholder="ingredient…" autocomplete="off" />
+        </div>
+        <div id="pantrySuggestions" class="suggestions"></div>
+        <input id="pantryQuantity" type="number" placeholder="qty" step="any" />
+        <input id="pantryUnit" type="text" placeholder="unit" />
+        <input id="pantryPrice" type="number" placeholder="$ paid" step="0.01" min="0" />
+        <input id="pantryStore" type="text" placeholder="store" />
+        <button id="pantryAddBtn" class="secondary" type="button">+ Add</button>
+      </div>
+      <ul id="pantryInventoryList" class="pantry-inventory-list"></ul>
+      <p id="pantryEmptyState" class="empty-state">Nothing in your pantry yet -- add what you've got.</p>
+    </section>
+
+    <section class="panel" id="insightsPanel" hidden>
+      <h2>From your pantry</h2>
+
+      <h3>You can make right now</h3>
+      <div id="canMakeNowList" class="results"></div>
+      <p id="canMakeNowEmpty" class="empty-state">Nothing at 100% yet -- add more to your pantry.</p>
+
+      <h3>Add one thing, unlock a recipe</h3>
+      <ul id="unlockList" class="unlock-list"></ul>
+      <p id="unlockEmpty" class="empty-state">Nothing is one ingredient away right now.</p>
+
+      <h3>You keep running out of…</h3>
+      <ul id="restockList" class="restock-list"></ul>
+      <p id="restockEmpty" class="empty-state">Not enough usage history yet to suggest restocks.</p>
+    </section>
+
+    <section class="panel" id="membersPanel" hidden>
+      <h2>Household members</h2>
+      <ul id="membersList" class="members-list"></ul>
     </section>
   </main>
 

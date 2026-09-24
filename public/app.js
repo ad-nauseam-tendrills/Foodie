@@ -1,17 +1,26 @@
 'use strict';
 
 const state = {
-  household: localStorage.getItem('foodie_household') || '',
+  auth: null, // { username, household } once signed in
+  authMode: 'login', // 'login' | 'signup'
   liked: [],
   disliked: [],
   planned: [], // recipe IDs currently in the meal plan
-  pantry: [], // ingredients you always have -- never shown on the grocery list
+  pantry: [], // structured pantry items: { ingredient, quantity, unit, price, store, addedBy, ... }
 };
 
 const el = {
-  householdInput: document.getElementById('householdInput'),
-  householdJoinBtn: document.getElementById('householdJoinBtn'),
-  householdStatus: document.getElementById('householdStatus'),
+  authBar: document.getElementById('authBar'),
+  authForm: document.getElementById('authForm'),
+  authHousehold: document.getElementById('authHousehold'),
+  authUsername: document.getElementById('authUsername'),
+  authPassword: document.getElementById('authPassword'),
+  authSubmitBtn: document.getElementById('authSubmitBtn'),
+  authToggleModeBtn: document.getElementById('authToggleModeBtn'),
+  authStatus: document.getElementById('authStatus'),
+  authStatusText: document.getElementById('authStatusText'),
+  signOutBtn: document.getElementById('signOutBtn'),
+  authError: document.getElementById('authError'),
   likeInput: document.getElementById('likeInput'),
   likeTags: document.getElementById('likeTags'),
   likeSuggestions: document.getElementById('likeSuggestions'),
@@ -39,7 +48,25 @@ const el = {
   planEmptyState: document.getElementById('planEmptyState'),
   groceryListWrap: document.getElementById('groceryListWrap'),
   groceryList: document.getElementById('groceryList'),
-  pantryLine: document.getElementById('pantryLine'),
+  pantryPanel: document.getElementById('pantryPanel'),
+  pantryIngredient: document.getElementById('pantryIngredient'),
+  pantrySuggestions: document.getElementById('pantrySuggestions'),
+  pantryQuantity: document.getElementById('pantryQuantity'),
+  pantryUnit: document.getElementById('pantryUnit'),
+  pantryPrice: document.getElementById('pantryPrice'),
+  pantryStore: document.getElementById('pantryStore'),
+  pantryAddBtn: document.getElementById('pantryAddBtn'),
+  pantryInventoryList: document.getElementById('pantryInventoryList'),
+  pantryEmptyState: document.getElementById('pantryEmptyState'),
+  insightsPanel: document.getElementById('insightsPanel'),
+  canMakeNowList: document.getElementById('canMakeNowList'),
+  canMakeNowEmpty: document.getElementById('canMakeNowEmpty'),
+  unlockList: document.getElementById('unlockList'),
+  unlockEmpty: document.getElementById('unlockEmpty'),
+  restockList: document.getElementById('restockList'),
+  restockEmpty: document.getElementById('restockEmpty'),
+  membersPanel: document.getElementById('membersPanel'),
+  membersList: document.getElementById('membersList'),
 };
 
 // ---------- Tag input helper --------------------------------------------
@@ -117,52 +144,147 @@ function wireTagInput({ input, tagsContainer, suggestionsContainer, list, kind, 
   });
 }
 
+// Simple single-value autocomplete (not a tag list) -- used for the
+// pantry ingredient input, which adds one item at a time rather than
+// building up a chip list.
+function wireIngredientAutocomplete(input, suggestionsContainer) {
+  let debounceTimer;
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const q = input.value.trim();
+    if (!q) {
+      suggestionsContainer.innerHTML = '';
+      return;
+    }
+    debounceTimer = setTimeout(async () => {
+      const options = await fetchJson(`/api/ingredients?q=${encodeURIComponent(q)}`);
+      suggestionsContainer.innerHTML = '';
+      for (const option of options.slice(0, 8)) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'suggestion-chip';
+        chip.textContent = option;
+        chip.addEventListener('click', () => {
+          input.value = option;
+          suggestionsContainer.innerHTML = '';
+          input.focus();
+        });
+        suggestionsContainer.appendChild(chip);
+      }
+    }, 150);
+  });
+}
+
 // ---------- Networking ---------------------------------------------------
 
 async function fetchJson(url, options) {
-  const res = await fetch(url, options);
+  const res = await fetch(url, { credentials: 'same-origin', ...options });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed: ${res.status}`);
+    const err = new Error(body.error || `Request failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
-// ---------- Household ----------------------------------------------------
-
-// Used anywhere an action silently needs a household first (add to plan,
-// save preferences, ...) -- a status line alone is too easy to miss, so
-// this also pulls the eye to where to actually fix it.
-function warnNoHousehold(message) {
-  el.householdStatus.textContent = message;
-  el.householdStatus.classList.add('warn');
-  el.householdInput.classList.add('warn');
-  el.householdInput.focus();
-  el.householdInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  setTimeout(() => el.householdInput.classList.remove('warn'), 2000);
-}
-
-async function joinHousehold(name) {
-  if (!name) return;
-  const data = await fetchJson('/api/households', {
+function postJson(url, body) {
+  return fetchJson(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(body || {}),
   });
-  state.household = data.name;
-  state.liked = data.liked;
-  state.disliked = data.disliked;
-  state.planned = data.planned || [];
-  state.pantry = data.pantry || [];
-  localStorage.setItem('foodie_household', data.name);
-  el.householdStatus.textContent = `Synced as "${data.name}"`;
-  el.householdStatus.classList.remove('warn');
+}
+
+// ---------- Auth -----------------------------------------------------------
+
+function warnNotSignedIn(message) {
+  el.authError.textContent = message;
+  el.authError.hidden = false;
+  el.authHousehold.focus();
+  el.authBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => {
+    el.authError.hidden = true;
+  }, 3000);
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  el.authSubmitBtn.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  el.authToggleModeBtn.textContent =
+    mode === 'signup' ? 'Already have an account? Sign in' : 'Need an account? Create one';
+  el.authPassword.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+}
+
+async function submitAuth(e) {
+  e.preventDefault();
+  el.authError.hidden = true;
+  const household = el.authHousehold.value.trim();
+  const username = el.authUsername.value.trim();
+  const password = el.authPassword.value;
+  if (!household || !username || !password) {
+    el.authError.textContent = 'Household, username, and password are all required.';
+    el.authError.hidden = false;
+    return;
+  }
+  try {
+    const endpoint = state.authMode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
+    const data = await postJson(endpoint, { household, username, password });
+    el.authPassword.value = '';
+    await onSignedIn(data);
+  } catch (err) {
+    el.authError.textContent = err.message;
+    el.authError.hidden = false;
+  }
+}
+
+async function onSignedIn(data) {
+  state.auth = { username: data.username, household: data.household };
+  el.authForm.hidden = true;
+  el.authStatus.hidden = false;
+  el.authStatusText.textContent = `${data.username} @ ${data.household}`;
+  el.pantryPanel.hidden = false;
+  el.insightsPanel.hidden = false;
+  el.membersPanel.hidden = false;
+
+  await loadHouseholdState();
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadMembers()]);
+  findDinner().catch(() => {});
+}
+
+function onSignedOut() {
+  state.auth = null;
+  state.liked = [];
+  state.disliked = [];
+  state.planned = [];
+  state.pantry = [];
+  el.authForm.hidden = false;
+  el.authStatus.hidden = true;
+  el.pantryPanel.hidden = true;
+  el.insightsPanel.hidden = true;
+  el.membersPanel.hidden = true;
+  el.groceryListWrap.hidden = true;
   renderTags(state.liked, el.likeTags, 'like', findDinner);
   renderTags(state.disliked, el.dislikeTags, 'dislike', findDinner);
   renderSavedExclusionsLine();
-  renderPantryLine();
+  renderPlannedList([]);
+}
+
+async function signOut() {
+  await fetchJson('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  onSignedOut();
   findDinner().catch(() => {});
-  loadGroceryList().catch(() => {});
+}
+
+async function loadHouseholdState() {
+  const data = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}`);
+  state.liked = data.liked;
+  state.disliked = data.disliked;
+  state.planned = data.planned || [];
+  renderTags(state.liked, el.likeTags, 'like', findDinner);
+  renderTags(state.disliked, el.dislikeTags, 'dislike', findDinner);
+  renderSavedExclusionsLine();
 }
 
 function renderSavedExclusionsLine() {
@@ -175,16 +297,16 @@ function renderSavedExclusionsLine() {
 }
 
 async function savePreferences() {
-  if (!state.household) {
-    warnNoHousehold('Pick a household name first');
+  if (!state.auth) {
+    warnNotSignedIn('Sign in first to save preferences');
     return;
   }
-  await fetchJson(`/api/households/${encodeURIComponent(state.household)}/preferences`, {
+  await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/preferences`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ liked: state.liked, disliked: state.disliked }),
   });
-  el.householdStatus.textContent = `Saved to "${state.household}"`;
+  el.authStatusText.textContent = `${state.auth.username} @ ${state.auth.household} -- saved`;
   renderSavedExclusionsLine();
 }
 
@@ -193,7 +315,6 @@ async function savePreferences() {
 async function findDinner() {
   const have = state.liked.join(',');
   const exclude = state.disliked.join(',');
-  const householdParam = state.household ? `&household=${encodeURIComponent(state.household)}` : '';
   const category = el.categorySelect.value;
   const categoryParam = category ? `&category=${encodeURIComponent(category)}` : '';
   const area = el.areaSelect.value;
@@ -209,7 +330,7 @@ async function findDinner() {
 
   const recipes = await fetchJson(
     `/api/recipes/match?have=${encodeURIComponent(have)}&exclude=${encodeURIComponent(exclude)}` +
-      `${householdParam}${categoryParam}${areaParam}${tagParam}${seasonalParam}`
+      `${categoryParam}${areaParam}${tagParam}${seasonalParam}`
   );
 
   el.resultsCount.textContent = recipes.length ? `${recipes.length} matches` : '';
@@ -322,7 +443,7 @@ async function openRecipeModal(id) {
   instructions.textContent = recipe.instructions || '';
   el.modalBody.appendChild(instructions);
 
-  if (state.household) {
+  if (state.auth) {
     const actions = document.createElement('div');
     actions.className = 'actions';
 
@@ -334,13 +455,12 @@ async function openRecipeModal(id) {
     cookedBtn.className = 'primary';
     cookedBtn.textContent = "We're making this tonight";
     cookedBtn.addEventListener('click', async () => {
-      await fetchJson(`/api/households/${encodeURIComponent(state.household)}/cooked`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipeId: recipe.id }),
-      });
+      await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/cooked`, { recipeId: recipe.id });
       cookedBtn.textContent = 'Logged ✓';
       cookedBtn.disabled = true;
+      // Cooking can consume tracked pantry quantities -- refresh
+      // everything that depends on pantry state.
+      await Promise.all([loadPantry(), loadInsights(), loadMembers()]);
     });
     actions.appendChild(cookedBtn);
 
@@ -410,7 +530,7 @@ function toggleSeasonalInfo() {
 // ---------- Meal plan + grocery list ---------------------------------------
 
 function groceryCheckedKey() {
-  return `foodie_grocery_checked_${state.household}`;
+  return `foodie_grocery_checked_${state.auth ? state.auth.household : ''}`;
 }
 
 function getCheckedIngredients() {
@@ -433,73 +553,26 @@ function setIngredientChecked(name, checked) {
 }
 
 async function addToPlan(recipeId) {
-  if (!state.household) {
-    warnNoHousehold('Pick a household first to start a meal plan');
+  if (!state.auth) {
+    warnNotSignedIn('Sign in first to start a meal plan');
     return;
   }
-  const data = await fetchJson(`/api/households/${encodeURIComponent(state.household)}/plan`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipeId }),
-  });
+  const data = await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/plan`, { recipeId });
   state.planned = data.planned;
   await loadGroceryList();
 }
 
 async function removeFromPlan(recipeId) {
-  const data = await fetchJson(
-    `/api/households/${encodeURIComponent(state.household)}/plan/${recipeId}`,
-    { method: 'DELETE' }
-  );
+  const data = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/plan/${recipeId}`, {
+    method: 'DELETE',
+  });
   state.planned = data.planned;
   await loadGroceryList();
 }
 
-async function addToPantry(ingredient) {
-  const data = await fetchJson(`/api/households/${encodeURIComponent(state.household)}/pantry`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ingredient }),
-  });
-  state.pantry = data.pantry;
-  renderPantryLine();
-  await loadGroceryList();
-}
-
-async function removeFromPantry(ingredient) {
-  const data = await fetchJson(
-    `/api/households/${encodeURIComponent(state.household)}/pantry/${encodeURIComponent(ingredient)}`,
-    { method: 'DELETE' }
-  );
-  state.pantry = data.pantry;
-  renderPantryLine();
-  await loadGroceryList();
-}
-
-function renderPantryLine() {
-  el.pantryLine.innerHTML = '';
-  if (!state.pantry.length) {
-    el.pantryLine.hidden = true;
-    return;
-  }
-  el.pantryLine.hidden = false;
-  el.pantryLine.append('Always have, never on the list: ');
-  state.pantry.forEach((ingredient, i) => {
-    if (i > 0) el.pantryLine.append(', ');
-    el.pantryLine.append(ingredient + ' ');
-    const undoBtn = document.createElement('button');
-    undoBtn.type = 'button';
-    undoBtn.textContent = '(undo)';
-    undoBtn.addEventListener('click', () => removeFromPantry(ingredient));
-    el.pantryLine.appendChild(undoBtn);
-  });
-}
-
 async function loadGroceryList() {
-  if (!state.household) return;
-  const { recipes, items } = await fetchJson(
-    `/api/households/${encodeURIComponent(state.household)}/grocery-list`
-  );
+  if (!state.auth) return;
+  const { recipes, items } = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/grocery-list`);
   renderPlannedList(recipes);
   renderGroceryList(items);
 }
@@ -578,8 +651,13 @@ function renderGroceryList(items) {
       haveItBtn.type = 'button';
       haveItBtn.className = 'have-it-btn';
       haveItBtn.textContent = '✕ have it';
-      haveItBtn.title = 'Already have this -- stop listing it';
-      haveItBtn.addEventListener('click', () => addToPantry(item.ingredient));
+      haveItBtn.title = 'Already have this -- add to pantry and stop listing it';
+      haveItBtn.addEventListener('click', async () => {
+        await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry`, {
+          ingredient: item.ingredient,
+        });
+        await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
+      });
       li.appendChild(haveItBtn);
 
       list.appendChild(li);
@@ -609,6 +687,197 @@ function createAddToPlanButton(recipeId) {
   return btn;
 }
 
+// ---------- Pantry inventory -------------------------------------------
+
+async function loadPantry() {
+  if (!state.auth) return;
+  state.pantry = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry`);
+  renderPantryInventory();
+}
+
+function renderPantryInventory() {
+  el.pantryInventoryList.innerHTML = '';
+  el.pantryEmptyState.hidden = state.pantry.length > 0;
+
+  for (const item of state.pantry) {
+    const li = document.createElement('li');
+    li.className = 'pantry-item';
+
+    const text = document.createElement('div');
+    text.className = 'pantry-item-text';
+    const name = document.createElement('span');
+    name.className = 'pantry-item-name';
+    const qtyLabel = item.quantity !== null ? `${item.quantity}${item.unit ? ' ' + item.unit : ''} ` : '';
+    name.textContent = `${qtyLabel}${item.ingredient}`;
+    text.appendChild(name);
+
+    const detailParts = [];
+    if (item.price !== null) detailParts.push(`$${item.price.toFixed(2)}${item.store ? ` at ${item.store}` : ''}`);
+    else if (item.store) detailParts.push(item.store);
+    if (item.addedBy) detailParts.push(`added by ${item.addedBy}`);
+    if (detailParts.length) {
+      const detail = document.createElement('span');
+      detail.className = 'pantry-item-detail';
+      detail.textContent = detailParts.join(' • ');
+      text.appendChild(detail);
+    }
+    li.appendChild(text);
+
+    const actions = document.createElement('div');
+    actions.className = 'pantry-item-actions';
+
+    const usedUpBtn = document.createElement('button');
+    usedUpBtn.type = 'button';
+    usedUpBtn.textContent = 'used it up';
+    usedUpBtn.title = 'Remove and count as used';
+    usedUpBtn.addEventListener('click', () => pantryItemAction(item.ingredient, 'used_up'));
+    actions.appendChild(usedUpBtn);
+
+    const wastedBtn = document.createElement('button');
+    wastedBtn.type = 'button';
+    wastedBtn.textContent = 'wasted';
+    wastedBtn.title = 'Remove and count as thrown out';
+    wastedBtn.addEventListener('click', () => pantryItemAction(item.ingredient, 'wasted'));
+    actions.appendChild(wastedBtn);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'danger';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove (added by mistake)';
+    removeBtn.addEventListener('click', () => deletePantryItem(item.ingredient));
+    actions.appendChild(removeBtn);
+
+    li.appendChild(actions);
+    el.pantryInventoryList.appendChild(li);
+  }
+}
+
+async function addPantryItem() {
+  if (!state.auth) {
+    warnNotSignedIn('Sign in first to track your pantry');
+    return;
+  }
+  const ingredient = el.pantryIngredient.value.trim();
+  if (!ingredient) return;
+  const body = { ingredient };
+  if (el.pantryQuantity.value !== '') body.quantity = Number(el.pantryQuantity.value);
+  if (el.pantryUnit.value.trim()) body.unit = el.pantryUnit.value.trim();
+  if (el.pantryPrice.value !== '') body.price = Number(el.pantryPrice.value);
+  if (el.pantryStore.value.trim()) body.store = el.pantryStore.value.trim();
+
+  await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry`, body);
+
+  el.pantryIngredient.value = '';
+  el.pantryQuantity.value = '';
+  el.pantryUnit.value = '';
+  el.pantryPrice.value = '';
+  el.pantryStore.value = '';
+  el.pantrySuggestions.innerHTML = '';
+
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
+}
+
+async function pantryItemAction(ingredient, action) {
+  await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/${encodeURIComponent(ingredient)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
+}
+
+async function deletePantryItem(ingredient) {
+  await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/${encodeURIComponent(ingredient)}`, {
+    method: 'DELETE',
+  });
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
+}
+
+// ---------- Pantry insights: make-now / unlock / restock -----------------
+
+async function loadInsights() {
+  if (!state.auth) return;
+  const [insights, restock] = await Promise.all([
+    fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/insights`),
+    fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/restock-suggestions`),
+  ]);
+  renderCanMakeNow(insights.canMakeNow);
+  renderUnlockList(insights.unlockSuggestions);
+  renderRestockList(restock);
+}
+
+function renderCanMakeNow(recipes) {
+  el.canMakeNowList.innerHTML = '';
+  el.canMakeNowEmpty.hidden = recipes.length > 0;
+  for (const recipe of recipes) {
+    el.canMakeNowList.appendChild(renderRecipeCard(recipe));
+  }
+}
+
+function renderUnlockList(suggestions) {
+  el.unlockList.innerHTML = '';
+  el.unlockEmpty.hidden = suggestions.length > 0;
+  for (const s of suggestions) {
+    const li = document.createElement('li');
+    li.className = 'unlock-item';
+    const strong = document.createElement('strong');
+    strong.textContent = `+ ${s.ingredient}`;
+    li.appendChild(strong);
+    const detail = document.createElement('div');
+    detail.className = 'unlock-recipes';
+    detail.textContent = `unlocks: ${s.unlocks.map((u) => u.name).join(', ')}`;
+    li.appendChild(detail);
+    el.unlockList.appendChild(li);
+  }
+}
+
+function renderRestockList(suggestions) {
+  el.restockList.innerHTML = '';
+  el.restockEmpty.hidden = suggestions.length > 0;
+  for (const s of suggestions) {
+    const li = document.createElement('li');
+    li.className = 'restock-item';
+    const strong = document.createElement('strong');
+    strong.textContent = s.ingredient;
+    li.appendChild(strong);
+    const detail = document.createElement('div');
+    detail.className = 'restock-detail';
+    const parts = [`used ${s.timesUsedRecently}x in the last 60 days`];
+    if (s.avgPrice !== null) parts.push(`avg $${s.avgPrice.toFixed(2)}`);
+    if (s.cheapestKnown) parts.push(`cheapest seen: $${s.cheapestKnown.price.toFixed(2)}${s.cheapestKnown.store ? ` at ${s.cheapestKnown.store}` : ''}`);
+    detail.textContent = parts.join(' • ');
+    li.appendChild(detail);
+    el.restockList.appendChild(li);
+  }
+}
+
+// ---------- Members --------------------------------------------------------
+
+async function loadMembers() {
+  if (!state.auth) return;
+  const members = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/members`);
+  renderMembers(members);
+}
+
+function renderMembers(members) {
+  el.membersList.innerHTML = '';
+  for (const m of members) {
+    const li = document.createElement('li');
+    li.className = 'member-item' + (m.isYou ? ' is-you' : '');
+    const strong = document.createElement('strong');
+    strong.textContent = m.isYou ? `${m.username} (you)` : m.username;
+    li.appendChild(strong);
+    const detail = document.createElement('div');
+    detail.className = 'member-detail';
+    detail.textContent = m.cookCount
+      ? `cooked ${m.cookCount}x • favorites: ${m.topRecipes.map((r) => r.name).join(', ')}`
+      : 'nothing logged yet';
+    li.appendChild(detail);
+    el.membersList.appendChild(li);
+  }
+}
+
 // ---------- Wire up --------------------------------------------------------
 
 wireTagInput({
@@ -629,10 +898,11 @@ wireTagInput({
   onChange: findDinner,
 });
 
-el.householdJoinBtn.addEventListener('click', () => joinHousehold(el.householdInput.value.trim()));
-el.householdInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') joinHousehold(el.householdInput.value.trim());
-});
+wireIngredientAutocomplete(el.pantryIngredient, el.pantrySuggestions);
+
+el.authForm.addEventListener('submit', submitAuth);
+el.authToggleModeBtn.addEventListener('click', () => setAuthMode(state.authMode === 'signup' ? 'login' : 'signup'));
+el.signOutBtn.addEventListener('click', signOut);
 
 el.saveBtn.addEventListener('click', savePreferences);
 el.matchBtn.addEventListener('click', findDinner);
@@ -641,6 +911,13 @@ el.modalOverlay.addEventListener('click', (e) => {
   if (e.target === el.modalOverlay) closeModal();
 });
 el.seasonalInfoBtn.addEventListener('click', toggleSeasonalInfo);
+el.pantryAddBtn.addEventListener('click', addPantryItem);
+el.pantryIngredient.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addPantryItem();
+  }
+});
 
 // Every filter re-runs the search immediately on change -- previously
 // only the "What's for dinner?" button did, so adding an ingredient or
@@ -662,19 +939,17 @@ el.tagInput.addEventListener('input', () => {
 });
 
 (async function init() {
+  setAuthMode('login');
   loadCategories().catch(() => {});
   loadAreas().catch(() => {});
   loadTags().catch(() => {});
   loadSeasonal().catch(() => {});
 
-  if (state.household) {
-    el.householdInput.value = state.household;
-    try {
-      await joinHousehold(state.household);
-    } catch {
-      // household no longer exists on this server -- ignore, start fresh
-    }
-  } else {
+  try {
+    const me = await fetchJson('/api/auth/me');
+    await onSignedIn(me);
+  } catch {
+    onSignedOut();
     findDinner().catch(() => {}); // browse mode -- show something immediately
   }
 })();

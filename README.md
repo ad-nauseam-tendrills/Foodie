@@ -17,10 +17,11 @@ lives in one SQLite file on a server you control.
   SuperCook. Score every recipe by what fraction of its ingredients you
   already have, filter out anything containing an ingredient you want to
   avoid, and rank by best match.
-- **Households**: a shared name (no password) your devices point at so
-  "liked/disliked ingredients" and "what we've cooked recently" sync
-  across everyone's phone/laptop. It's just a row in your own database —
-  there's no external account system.
+- **Households**: a shared space multiple people sign into with their
+  own username + password, so "liked/disliked ingredients", the pantry,
+  and "what we've cooked recently" sync across everyone's phone/laptop
+  while each person keeps their own login. Accounts live in the same
+  local database as everything else — no third-party auth provider.
 - **Storage**: [`node:sqlite`](https://nodejs.org/api/sqlite.html), built
   into Node.js 22+. No native modules to compile, no separate database
   server to run or pay for.
@@ -31,7 +32,9 @@ lives in one SQLite file on a server you control.
 server/
   index.js          Express app + API routes
   db.js             SQLite schema/connection
-  services/matcher.js   Ingredient-matching search
+  services/matcher.js          Ingredient-matching search
+  services/auth.js             Password hashing + sessions
+  services/pantry-insights.js  "Make now" / "unlock with X" / restock suggestions
   seed/seed.js       One-time import from TheMealDB
 public/
   index.html, app.js, styles.css   Frontend (no framework, no build step)
@@ -155,13 +158,34 @@ Either way, point an A record for your domain at the droplet's IP first.
   what's in season" toggle filters to just those. Edit that file directly
   if you're elsewhere or want a different region's calendar.
 
-Saved exclusions (the "always avoid" list) are already permanent once you
-save them to a household -- that's what `PUT .../preferences` below does.
-They reload automatically next time that household name is used, on any
-device. Excluding "curry" skips curry *dishes*, not just recipes with an
+Saved exclusions (the "always avoid" list) are permanent once you save
+them while signed in -- that's what `PUT .../preferences` below does.
+They reload automatically next time you sign in, on any device.
+Excluding "curry" skips curry *dishes*, not just recipes with an
 ingredient literally named "curry" -- it checks the recipe's name,
 category, and tags too, since a chicken curry made with turmeric and
 garam masala has no ingredient called "curry" at all.
+
+## Accounts & members
+
+The app is meant to be reachable outside your own network, so it uses
+real per-person accounts (username + password, hashed with Node's
+built-in `scrypt` -- no bcrypt/argon2 native module to compile) instead
+of the old passwordless "type any household name" model. Signing up
+either creates a new household or joins an existing one by name; every
+member of a household shares its liked/disliked ingredients, meal plan,
+pantry, and cooked history, while keeping their own login. There's no
+invite flow yet -- anyone who knows a household's name can create an
+account inside it, the same trust model as everyone sharing one
+password used to have, just with individual logins on top. Login rate
+limiting (8 attempts / 10 min per IP+household+username) is in-memory
+and resets on restart -- fine for a single small instance, not something
+that survives a process crash mid-attack.
+
+Household members can see each other on the **Household members**
+panel -- cook count and top recipes per person -- by design: the point
+of a shared household is that visibility, not privacy between its own
+members.
 
 ## Meal planning + grocery list
 
@@ -188,12 +212,34 @@ seasonal calendar and curated recipes: extend it by hand as an
 ingredient lands somewhere wrong, rather than reaching for a heavier
 classifier.
 
-**Pantry staples**: click "✕ have it" on any grocery-list item you
-always have on hand (salt, olive oil, ...) and it's saved to the
-household -- synced across devices, since "we always have this" is a
-fact about your kitchen, not a per-device shopping-trip thing -- and
-excluded from every grocery list from then on. Undo from the "Always
-have" line above the list.
+**Pantry inventory**: the Pantry panel tracks what a household actually
+has -- ingredient, optional quantity/unit, and optional price paid +
+store -- synced across devices, since it's a fact about your kitchen,
+not a per-device shopping-trip thing. Click "✕ have it" on any
+grocery-list item to add it untracked (no quantity, just "we have
+this"); anything in the pantry (untracked, or with quantity > 0) is
+excluded from every grocery list. Each item has "used it up" (removes
+it, logs it as consumed) and "wasted" (removes it, logs it as thrown
+out) buttons, plus a plain ✕ for "added by mistake." Marking a recipe
+cooked also best-effort decrements any pantry item it uses by one unit
+if you're tracking a quantity for it -- there's no structured "2 cups"
+parsing to decrement precisely by, so this is an approximation, not a
+real running count.
+
+From that inventory, three panels answer the actual questions a pantry
+raises, computed with the same ingredient-overlap matching as search
+(no AI):
+- **You can make right now** -- recipes at 100% match against your
+  current pantry.
+- **Add one thing, unlock a recipe** -- recipes exactly one ingredient
+  away, grouped by that missing ingredient, so "buy eggs" shows
+  everything it unlocks at once.
+- **You keep running out of…** -- ingredients used (cooked with, or
+  marked "used it up") 2+ times in the last 60 days that aren't
+  currently in your pantry, with the average price and cheapest store
+  you've actually logged for that ingredient. This is entirely your own
+  purchase history -- there's no external price/availability API behind
+  it, on purpose (no ongoing dependency, no subscription).
 
 **Why "Carrot" and "Carrots" don't show up as two different
 ingredients**: `server/data/ingredient-aliases.js` canonicalizes known
@@ -213,16 +259,25 @@ another one.
 | `GET /api/areas` | Distinct cuisines/regions |
 | `GET /api/tags` | Distinct recipe tags |
 | `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) |
-| `GET /api/recipes/match?have=a,b&exclude=c&household=name&category=&area=&tag=&seasonal=true` | Ranked recipe matches |
+| `GET /api/recipes/match?have=a,b&exclude=c&category=&area=&tag=&seasonal=true` | Ranked recipe matches (works signed out; de-emphasizes your own household's recently-cooked recipes if signed in) |
 | `GET /api/recipes/:id` | Full recipe detail |
-| `POST /api/households` | Create/fetch a household by name |
+| `POST /api/auth/signup` | Create an account (`{household, username, password}`) -- creates the household if it doesn't exist yet |
+| `POST /api/auth/login` | Sign in, sets the session cookie |
+| `POST /api/auth/logout` | Sign out |
+| `GET /api/auth/me` | Current session's username/household, or 401 |
+| `GET /api/households/:name` | Household state: liked/disliked/cooked log/plan (requires being signed into that household) |
 | `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (permanent exclusions) |
-| `POST /api/households/:name/cooked` | Log a recipe as cooked (keeps suggestions from repeating) |
+| `POST /api/households/:name/cooked` | Log a recipe as cooked -- de-dupes future suggestions, decrements matching pantry quantities |
 | `POST /api/households/:name/plan` | Add a recipe to the meal plan |
 | `DELETE /api/households/:name/plan/:recipeId` | Remove a recipe from the meal plan |
 | `GET /api/households/:name/grocery-list` | Sectioned, pantry-filtered ingredient list for the current plan |
-| `POST /api/households/:name/pantry` | Mark an ingredient as a pantry staple (excluded from grocery lists) |
-| `DELETE /api/households/:name/pantry/:ingredient` | Un-mark a pantry staple |
+| `GET /api/households/:name/pantry` | List pantry items (ingredient, quantity, unit, price, store, who added it) |
+| `POST /api/households/:name/pantry` | Add/restock a pantry item; a price logs a purchase event |
+| `PATCH /api/households/:name/pantry/:ingredient` | Set an exact quantity, or `{action: "used_up"\|"wasted"}` |
+| `DELETE /api/households/:name/pantry/:ingredient` | Remove a pantry item (no usage event -- "added by mistake") |
+| `GET /api/households/:name/pantry/insights` | `{canMakeNow, unlockSuggestions}` computed from the current pantry |
+| `GET /api/households/:name/pantry/restock-suggestions` | Frequently-used ingredients you're currently out of, with your own price history |
+| `GET /api/households/:name/members` | Household members with cook count + top recipes |
 
 ## Roadmap / ideas not built yet
 
@@ -239,9 +294,19 @@ another one.
   fast rather than browsing.
 - **Time/effort as a filter** (15-minutes/one-pan vs. a slow weekend
   meal) — often the real constraint, not just ingredients.
-- **Photo-based pantry input** — snap the fridge instead of typing
-  ingredients (would need a vision model — local or paid, your call when
-  you get there).
+- **Receipt scanning into the pantry** — photograph a receipt and have
+  its line items land in pantry inventory automatically, instead of
+  typing each one in. The hard part isn't OCR, it's mapping "ORG MILK
+  1GAL WEGMANS" to the ingredient "Milk" — planned approach is OCR
+  (likely Tesseract.js, no external API) to pull raw line items, then
+  fuzzy-match each one against known ingredients and let you confirm or
+  correct the match before it's added, rather than trusting a guess
+  silently. Not started yet.
+- **A real efficiency/waste metric** — `usage_events` already has
+  everything needed (`purchased` / `consumed` / `wasted` per ingredient,
+  per person, with price) to compute e.g. a household's waste rate over
+  time or cost-per-meal; there's just no dashboard surfacing it yet
+  beyond the raw restock suggestions.
 
 ## Attribution
 

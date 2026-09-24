@@ -34,11 +34,33 @@ body {
 
 .topbar h1 { margin: 0; font-size: 1.4rem; }
 
-.household-bar {
+.household-bar,
+.auth-bar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.auth-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.auth-form input {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  width: 140px;
+}
+
+.auth-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .household-status { font-size: 0.85rem; color: var(--muted); }
@@ -466,3 +488,101 @@ footer {
 }
 
 footer a { color: var(--accent); }
+
+/* ---------- Pantry inventory ---------- */
+
+.pantry-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.pantry-add-row input[type="text"],
+.pantry-add-row input[type="number"] {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+}
+
+#pantryQuantity { width: 70px; }
+#pantryUnit { width: 90px; }
+#pantryPrice { width: 90px; }
+#pantryStore { width: 110px; }
+
+.pantry-inventory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.pantry-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.pantry-item-text { flex: 1; min-width: 160px; }
+.pantry-item-name { font-weight: 600; }
+.pantry-item-detail { font-size: 0.78rem; color: var(--muted); display: block; }
+
+.pantry-item-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.pantry-item-actions button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pantry-item-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.pantry-item-actions button.danger:hover { border-color: var(--bad); color: var(--bad); }
+
+/* ---------- Insights: unlock / restock / members ---------- */
+
+.unlock-list,
+.restock-list,
+.members-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.unlock-item,
+.restock-item,
+.member-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+}
+
+.unlock-item strong,
+.restock-item strong,
+.member-item strong { font-size: 0.95rem; }
+
+.unlock-item .unlock-recipes,
+.restock-item .restock-detail,
+.member-item .member-detail {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
+.member-item.is-you { border-color: var(--accent); }
