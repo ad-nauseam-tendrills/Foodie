@@ -139,6 +139,56 @@ name and `reverse_proxy localhost:3001`).
 
 Either way, point an A record for your domain at the droplet's IP first.
 
+### Staging
+
+`docker-compose.staging.yml` runs a second, fully isolated copy of the
+app alongside production on the same droplet -- its own container
+(`foodie-staging`), its own port (`3002`, vs. production's `3001`), and
+its own database (`./data-staging/`, never touches production's
+`./data/`). Useful any time a change is worth poking at with real
+sign-ups before it reaches production, which is exactly the shape of
+the accounts/pantry release: it replaces the old passwordless household
+model, so existing production sessions would need to create accounts.
+
+```bash
+cd ~/foodie
+git pull origin claude/dinner-recipe-app-concept-ii77im
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+Front it with its own subdomain so it's reachable to actually click
+through (see `deploy/nginx-site-staging.conf.example` -- same pattern as
+the production vhost, pointed at port 3002 instead of 3001):
+
+```bash
+sudo cp deploy/nginx-site-staging.conf.example /etc/nginx/sites-available/foodie-staging
+sudo sed -i 's/foodie-staging.edgarbustos.art/your-staging-subdomain/g' \
+    /etc/nginx/sites-available/foodie-staging
+sudo ln -s /etc/nginx/sites-available/foodie-staging /etc/nginx/sites-enabled/foodie-staging
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d your-staging-subdomain   # after pointing an A record at the droplet's IP
+```
+
+Once you've clicked through staging and you're happy, promote to
+production the same way you always deploy -- pull the same commit and
+rebuild the production container:
+
+```bash
+docker compose up -d --build
+```
+
+Production and staging are separate Docker volumes, so nothing you did
+in staging (test accounts, test pantry data) carries over -- production
+starts clean on this release the same as it would without staging at
+all. Tear staging down when you're done with it:
+
+```bash
+docker compose -f docker-compose.staging.yml down
+```
+
+(add `-v` too if you also want its `./data-staging/` volume gone --
+`down` alone leaves the folder on disk).
+
 ## Filtering: category, cuisine, tags, and season
 
 - **Category** narrows to a broad group (Chicken, Seafood, Dessert,
