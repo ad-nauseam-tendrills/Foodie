@@ -3,6 +3,7 @@
 const state = {
   auth: null, // { username, household } once signed in
   authMode: 'login', // 'login' | 'signup'
+  inviteToken: null, // set when the page was opened via a ?invite= link
   liked: [],
   disliked: [],
   planned: [], // recipe IDs currently in the meal plan
@@ -17,6 +18,13 @@ const el = {
   authPassword: document.getElementById('authPassword'),
   authSubmitBtn: document.getElementById('authSubmitBtn'),
   authToggleModeBtn: document.getElementById('authToggleModeBtn'),
+  authHint: document.getElementById('authHint'),
+  inviteAcceptForm: document.getElementById('inviteAcceptForm'),
+  inviteHouseholdLabel: document.getElementById('inviteHouseholdLabel'),
+  inviteUsername: document.getElementById('inviteUsername'),
+  invitePassword: document.getElementById('invitePassword'),
+  inviteAcceptBtn: document.getElementById('inviteAcceptBtn'),
+  inviteCancelBtn: document.getElementById('inviteCancelBtn'),
   authStatus: document.getElementById('authStatus'),
   authStatusText: document.getElementById('authStatusText'),
   signOutBtn: document.getElementById('signOutBtn'),
@@ -67,6 +75,12 @@ const el = {
   restockEmpty: document.getElementById('restockEmpty'),
   membersPanel: document.getElementById('membersPanel'),
   membersList: document.getElementById('membersList'),
+  inviteNote: document.getElementById('inviteNote'),
+  generateInviteBtn: document.getElementById('generateInviteBtn'),
+  inviteLinkBox: document.getElementById('inviteLinkBox'),
+  inviteLinkOutput: document.getElementById('inviteLinkOutput'),
+  copyInviteLinkBtn: document.getElementById('copyInviteLinkBtn'),
+  pendingInvitesList: document.getElementById('pendingInvitesList'),
 };
 
 // ---------- Tag input helper --------------------------------------------
@@ -211,10 +225,11 @@ function warnNotSignedIn(message) {
 
 function setAuthMode(mode) {
   state.authMode = mode;
-  el.authSubmitBtn.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  el.authSubmitBtn.textContent = mode === 'signup' ? 'Create a new household' : 'Sign in';
   el.authToggleModeBtn.textContent =
-    mode === 'signup' ? 'Already have an account? Sign in' : 'Need an account? Create one';
+    mode === 'signup' ? 'Already have an account? Sign in' : 'Starting a new household? Create one';
   el.authPassword.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+  el.authHint.hidden = mode !== 'signup';
 }
 
 async function submitAuth(e) {
@@ -241,7 +256,10 @@ async function submitAuth(e) {
 
 async function onSignedIn(data) {
   state.auth = { username: data.username, household: data.household };
+  state.inviteToken = null;
   el.authForm.hidden = true;
+  el.authHint.hidden = true;
+  el.inviteAcceptForm.hidden = true;
   el.authStatus.hidden = false;
   el.authStatusText.textContent = `${data.username} @ ${data.household}`;
   el.pantryPanel.hidden = false;
@@ -249,7 +267,7 @@ async function onSignedIn(data) {
   el.membersPanel.hidden = false;
 
   await loadHouseholdState();
-  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadMembers()]);
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadMembers(), loadInvites()]);
   findDinner().catch(() => {});
 }
 
@@ -260,6 +278,7 @@ function onSignedOut() {
   state.planned = [];
   state.pantry = [];
   el.authForm.hidden = false;
+  el.inviteAcceptForm.hidden = true;
   el.authStatus.hidden = true;
   el.pantryPanel.hidden = true;
   el.insightsPanel.hidden = true;
@@ -275,6 +294,61 @@ async function signOut() {
   await fetchJson('/api/auth/logout', { method: 'POST' }).catch(() => {});
   onSignedOut();
   findDinner().catch(() => {});
+}
+
+// ---------- Accept-invite flow (?invite=<token> link) -----------------
+
+function clearInviteFromUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('invite');
+  window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+}
+
+async function checkForInviteLink() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('invite');
+  if (!token) return;
+
+  try {
+    const invite = await fetchJson(`/api/invites/${encodeURIComponent(token)}`);
+    state.inviteToken = token;
+    el.authForm.hidden = true;
+    el.authHint.hidden = true;
+    el.inviteAcceptForm.hidden = false;
+    el.inviteHouseholdLabel.textContent = `Joining "${invite.household}" -- pick a username and password`;
+  } catch (err) {
+    el.authError.textContent = `That invite link ${err.status === 410 ? 'is no longer valid' : "wasn't found"} (${err.message}).`;
+    el.authError.hidden = false;
+    clearInviteFromUrl();
+  }
+}
+
+function cancelInviteAccept() {
+  state.inviteToken = null;
+  el.inviteAcceptForm.hidden = true;
+  el.authForm.hidden = false;
+  clearInviteFromUrl();
+}
+
+async function submitAcceptInvite(e) {
+  e.preventDefault();
+  el.authError.hidden = true;
+  const username = el.inviteUsername.value.trim();
+  const password = el.invitePassword.value;
+  if (!username || !password) {
+    el.authError.textContent = 'Username and password are both required.';
+    el.authError.hidden = false;
+    return;
+  }
+  try {
+    const data = await postJson('/api/auth/accept-invite', { token: state.inviteToken, username, password });
+    el.invitePassword.value = '';
+    clearInviteFromUrl();
+    await onSignedIn(data);
+  } catch (err) {
+    el.authError.textContent = err.message;
+    el.authError.hidden = false;
+  }
 }
 
 async function loadHouseholdState() {
@@ -878,6 +952,78 @@ function renderMembers(members) {
   }
 }
 
+// ---------- Invites (invite-only joins) -------------------------------
+
+async function loadInvites() {
+  if (!state.auth) return;
+  const invites = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/invites`);
+  renderInvites(invites);
+}
+
+function renderInvites(invites) {
+  el.pendingInvitesList.innerHTML = '';
+  for (const invite of invites) {
+    const li = document.createElement('li');
+    li.className = 'pending-invite-item';
+
+    const text = document.createElement('span');
+    const statusSpan = document.createElement('span');
+    statusSpan.className = `invite-status ${invite.status}`;
+    statusSpan.textContent = invite.status;
+    text.appendChild(statusSpan);
+    const label = invite.note ? ` -- ${invite.note}` : '';
+    const detail =
+      invite.status === 'used'
+        ? `${label} (joined as ${invite.usedBy})`
+        : invite.status === 'expired'
+          ? `${label} (expired ${new Date(invite.expiresAt).toLocaleDateString()})`
+          : `${label} (expires ${new Date(invite.expiresAt).toLocaleDateString()})`;
+    text.append(' ' + detail);
+    li.appendChild(text);
+
+    if (invite.status === 'pending') {
+      const revokeBtn = document.createElement('button');
+      revokeBtn.type = 'button';
+      revokeBtn.textContent = 'revoke';
+      revokeBtn.addEventListener('click', async () => {
+        await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/invites/${invite.id}`, {
+          method: 'DELETE',
+        });
+        await loadInvites();
+      });
+      li.appendChild(revokeBtn);
+    }
+
+    el.pendingInvitesList.appendChild(li);
+  }
+}
+
+async function generateInvite() {
+  if (!state.auth) return;
+  const note = el.inviteNote.value.trim();
+  const data = await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/invites`, note ? { note } : {});
+  el.inviteNote.value = '';
+  el.inviteLinkBox.hidden = false;
+  el.inviteLinkOutput.value = data.url;
+  el.inviteLinkOutput.select();
+  await loadInvites();
+}
+
+async function copyInviteLink() {
+  const value = el.inviteLinkOutput.value;
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    el.inviteLinkOutput.select();
+    document.execCommand('copy');
+  }
+  const original = el.copyInviteLinkBtn.textContent;
+  el.copyInviteLinkBtn.textContent = 'Copied!';
+  setTimeout(() => {
+    el.copyInviteLinkBtn.textContent = original;
+  }, 1500);
+}
+
 // ---------- Wire up --------------------------------------------------------
 
 wireTagInput({
@@ -903,6 +1049,10 @@ wireIngredientAutocomplete(el.pantryIngredient, el.pantrySuggestions);
 el.authForm.addEventListener('submit', submitAuth);
 el.authToggleModeBtn.addEventListener('click', () => setAuthMode(state.authMode === 'signup' ? 'login' : 'signup'));
 el.signOutBtn.addEventListener('click', signOut);
+el.inviteAcceptForm.addEventListener('submit', submitAcceptInvite);
+el.inviteCancelBtn.addEventListener('click', cancelInviteAccept);
+el.generateInviteBtn.addEventListener('click', generateInvite);
+el.copyInviteLinkBtn.addEventListener('click', copyInviteLink);
 
 el.saveBtn.addEventListener('click', savePreferences);
 el.matchBtn.addEventListener('click', findDinner);
@@ -950,6 +1100,7 @@ el.tagInput.addEventListener('input', () => {
     await onSignedIn(me);
   } catch {
     onSignedOut();
+    await checkForInviteLink();
     findDinner().catch(() => {}); // browse mode -- show something immediately
   }
 })();

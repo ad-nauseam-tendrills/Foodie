@@ -17,6 +17,14 @@
         <button id="authSubmitBtn" type="submit" class="primary">Sign in</button>
         <button id="authToggleModeBtn" type="button" class="link-btn">Need an account? Create one</button>
       </form>
+      <p id="authHint" class="household-status" hidden>Creates a brand-new household. To join an existing one, ask a member for an invite link.</p>
+      <form id="inviteAcceptForm" class="auth-form" hidden>
+        <span id="inviteHouseholdLabel" class="household-status"></span>
+        <input id="inviteUsername" type="text" placeholder="Username" autocomplete="username" />
+        <input id="invitePassword" type="password" placeholder="Password" autocomplete="new-password" />
+        <button id="inviteAcceptBtn" type="submit" class="primary">Join household</button>
+        <button id="inviteCancelBtn" type="button" class="link-btn">Not you? Use a different account</button>
+      </form>
       <div id="authStatus" class="auth-status" hidden>
         <span id="authStatusText" class="household-status"></span>
         <button id="signOutBtn" class="secondary">Sign out</button>
@@ -148,6 +156,18 @@
     <section class="panel" id="membersPanel" hidden>
       <h2>Household members</h2>
       <ul id="membersList" class="members-list"></ul>
+
+      <h3>Invite someone</h3>
+      <p class="muted">Generates a link that adds them to this household -- no email is sent by the app, copy it and send it yourself however you like.</p>
+      <div class="invite-generate-row">
+        <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
+        <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
+      </div>
+      <div id="inviteLinkBox" class="invite-link-box" hidden>
+        <input id="inviteLinkOutput" type="text" readonly />
+        <button id="copyInviteLinkBtn" type="button">Copy</button>
+      </div>
+      <ul id="pendingInvitesList" class="pending-invites-list"></ul>
     </section>
   </main>
 

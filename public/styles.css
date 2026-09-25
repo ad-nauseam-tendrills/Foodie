@@ -586,3 +586,77 @@ footer a { color: var(--accent); }
 }
 
 .member-item.is-you { border-color: var(--accent); }
+
+/* ---------- Invites ---------- */
+
+.invite-generate-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.invite-generate-row input[type="text"] {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  flex: 1;
+  min-width: 160px;
+}
+
+.invite-link-box {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.invite-link-box input[type="text"] {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  flex: 1;
+  background: #f4f1eb;
+  color: var(--text);
+}
+
+.pending-invites-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.pending-invite-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.pending-invite-item .invite-status {
+  font-weight: 600;
+}
+
+.pending-invite-item .invite-status.pending { color: var(--good); }
+.pending-invite-item .invite-status.used { color: var(--muted); }
+.pending-invite-item .invite-status.expired { color: var(--bad); }
+
+.pending-invite-item button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pending-invite-item button:hover { border-color: var(--bad); color: var(--bad); }

@@ -13,6 +13,7 @@ const {
   verifyPassword,
   createToken,
   tokenExpiryIso,
+  inviteExpiryIso,
   isLoginRateLimited,
   recordLoginAttempt,
   SESSION_TTL_MS,
@@ -128,6 +129,9 @@ function sameHousehold(req, res) {
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{2,30}$/;
 
+// Creates a brand-new household only -- joining an existing one requires
+// an invite (below). Without this, anyone who knew (or guessed) a
+// household's name could just sign themselves into it.
 app.post('/api/auth/signup', (req, res) => {
   const householdName = String((req.body && req.body.household) || '').trim();
   const username = String((req.body && req.body.username) || '').trim();
@@ -139,16 +143,13 @@ app.post('/api/auth/signup', (req, res) => {
   }
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-  let household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
-  if (!household) {
-    db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
-    household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
+  const existingHousehold = db.prepare(`SELECT 1 FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
+  if (existingHousehold) {
+    return res.status(409).json({ error: 'That household already exists -- ask a member for an invite link' });
   }
 
-  const existingUser = db
-    .prepare(`SELECT 1 FROM users WHERE household_id = ? AND username = ? COLLATE NOCASE`)
-    .get(household.id, username);
-  if (existingUser) return res.status(409).json({ error: 'That username is already taken in this household' });
+  db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
+  const household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
 
   const { salt, hash } = hashPassword(password);
   const result = db
@@ -200,6 +201,125 @@ app.get('/api/auth/me', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
   res.json({ username: user.username, household: user.householdName });
+});
+
+// --- Invites -----------------------------------------------------------
+//
+// The only way to join an *existing* household. No email is sent by the
+// app -- this just generates the link; a member copies it and sends it
+// however they want.
+
+function inviteStatus(invite) {
+  if (invite.used_at) return 'used';
+  if (new Date(invite.expires_at).getTime() < Date.now()) return 'expired';
+  return 'pending';
+}
+
+// Public: lets the accept-invite page show which household you're
+// joining before you commit to a username/password.
+app.get('/api/invites/:token', (req, res) => {
+  const invite = db
+    .prepare(
+      `SELECT i.*, h.name AS household_name FROM invites i JOIN households h ON h.id = i.household_id WHERE i.token = ?`
+    )
+    .get(req.params.token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found' });
+  const status = inviteStatus(invite);
+  if (status !== 'pending') {
+    return res.status(410).json({ error: status === 'used' ? 'This invite has already been used' : 'This invite has expired' });
+  }
+  res.json({ household: invite.household_name, expiresAt: invite.expires_at });
+});
+
+app.post('/api/auth/accept-invite', (req, res) => {
+  const token = String((req.body && req.body.token) || '').trim();
+  const username = String((req.body && req.body.username) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+
+  if (!token) return res.status(400).json({ error: 'Invite token is required' });
+  if (!USERNAME_RE.test(username)) {
+    return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
+  }
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  const invite = db.prepare(`SELECT * FROM invites WHERE token = ?`).get(token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found' });
+  const status = inviteStatus(invite);
+  if (status !== 'pending') {
+    return res.status(410).json({ error: status === 'used' ? 'This invite has already been used' : 'This invite has expired' });
+  }
+
+  const existingUser = db
+    .prepare(`SELECT 1 FROM users WHERE household_id = ? AND username = ? COLLATE NOCASE`)
+    .get(invite.household_id, username);
+  if (existingUser) return res.status(409).json({ error: 'That username is already taken in this household' });
+
+  const { salt, hash } = hashPassword(password);
+  const result = db
+    .prepare(`INSERT INTO users (household_id, username, password_hash, password_salt) VALUES (?, ?, ?, ?)`)
+    .run(invite.household_id, username, hash, salt);
+
+  db.prepare(`UPDATE invites SET used_at = datetime('now'), used_by_user_id = ? WHERE id = ?`).run(
+    result.lastInsertRowid,
+    invite.id
+  );
+
+  const sessionToken = createToken();
+  db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`).run(
+    sessionToken,
+    result.lastInsertRowid,
+    tokenExpiryIso()
+  );
+  setSessionCookie(req, res, sessionToken);
+  const household = db.prepare(`SELECT name FROM households WHERE id = ?`).get(invite.household_id);
+  res.json({ ok: true, username, household: household.name });
+});
+
+app.get('/api/households/:name/invites', requireAuth, (req, res) => {
+  if (!sameHousehold(req, res)) return;
+  const rows = db
+    .prepare(
+      `SELECT i.id AS id, i.token AS token, i.note AS note, i.created_at AS createdAt, i.expires_at AS expiresAt,
+              i.used_at AS usedAt, u.username AS usedBy, c.username AS createdBy
+       FROM invites i
+       LEFT JOIN users u ON u.id = i.used_by_user_id
+       LEFT JOIN users c ON c.id = i.created_by_user_id
+       WHERE i.household_id = ?
+       ORDER BY i.created_at DESC
+       LIMIT 30`
+    )
+    .all(req.user.householdId);
+  const host = `${req.protocol}://${req.get('host')}`;
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      status: inviteStatus({ used_at: r.usedAt, expires_at: r.expiresAt }),
+      note: r.note,
+      createdAt: r.createdAt,
+      expiresAt: r.expiresAt,
+      usedBy: r.usedBy,
+      createdBy: r.createdBy,
+      url: `${host}/?invite=${r.token}`,
+    }))
+  );
+});
+
+app.post('/api/households/:name/invites', requireAuth, (req, res) => {
+  if (!sameHousehold(req, res)) return;
+  const note = req.body && req.body.note ? String(req.body.note).trim().slice(0, 200) : null;
+  const token = createToken();
+  db.prepare(
+    `INSERT INTO invites (household_id, token, note, created_by_user_id, expires_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(req.user.householdId, token, note, req.user.id, inviteExpiryIso());
+
+  const host = `${req.protocol}://${req.get('host')}`;
+  res.json({ ok: true, url: `${host}/?invite=${token}`, expiresAt: inviteExpiryIso() });
+});
+
+app.delete('/api/households/:name/invites/:id', requireAuth, (req, res) => {
+  if (!sameHousehold(req, res)) return;
+  db.prepare(`DELETE FROM invites WHERE id = ? AND household_id = ?`).run(req.params.id, req.user.householdId);
+  res.json({ ok: true });
 });
 
 // --- Ingredients (autocomplete) ---------------------------------------

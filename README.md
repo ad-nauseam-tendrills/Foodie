@@ -221,16 +221,28 @@ garam masala has no ingredient called "curry" at all.
 The app is meant to be reachable outside your own network, so it uses
 real per-person accounts (username + password, hashed with Node's
 built-in `scrypt` -- no bcrypt/argon2 native module to compile) instead
-of the old passwordless "type any household name" model. Signing up
-either creates a new household or joins an existing one by name; every
-member of a household shares its liked/disliked ingredients, meal plan,
-pantry, and cooked history, while keeping their own login. There's no
-invite flow yet -- anyone who knows a household's name can create an
-account inside it, the same trust model as everyone sharing one
-password used to have, just with individual logins on top. Login rate
-limiting (8 attempts / 10 min per IP+household+username) is in-memory
-and resets on restart -- fine for a single small instance, not something
-that survives a process crash mid-attack.
+of the old passwordless "type any household name" model. Every member of
+a household shares its liked/disliked ingredients, meal plan, pantry,
+and cooked history, while keeping their own login. Login rate limiting
+(8 attempts / 10 min per IP+household+username) is in-memory and resets
+on restart -- fine for a single small instance, not something that
+survives a process crash mid-attack.
+
+**Joining a household is invite-only.** Signing up (`POST
+/api/auth/signup`) only ever creates a brand-new household -- if the
+name's already taken, it's rejected rather than letting you sign into
+someone else's. To add someone to an *existing* household, a current
+member generates an invite link from the Household members panel
+("Invite someone") and sends it to them however they want -- text,
+email, whatever. **The app never sends the email itself** -- there's no
+outbound mail provider wired up (a deliberate choice for now: it would
+mean either a third-party transactional-email account or standing up
+your own SMTP, and this was low-value enough at household scale to skip
+until it's actually needed). The link is just `/?invite=<token>`; opening
+it shows which household you'd be joining and a plain username/password
+form -- accepting it (`POST /api/auth/accept-invite`) consumes the token,
+so it can't be reused. Invites expire after 7 days and can be revoked
+any time before they're used, both from the same panel.
 
 Household members can see each other on the **Household members**
 panel -- cook count and top recipes per person -- by design: the point
@@ -311,10 +323,15 @@ another one.
 | `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) |
 | `GET /api/recipes/match?have=a,b&exclude=c&category=&area=&tag=&seasonal=true` | Ranked recipe matches (works signed out; de-emphasizes your own household's recently-cooked recipes if signed in) |
 | `GET /api/recipes/:id` | Full recipe detail |
-| `POST /api/auth/signup` | Create an account (`{household, username, password}`) -- creates the household if it doesn't exist yet |
+| `POST /api/auth/signup` | Create a *new* household + its first account (`{household, username, password}`) -- 409s if that household already exists |
 | `POST /api/auth/login` | Sign in, sets the session cookie |
 | `POST /api/auth/logout` | Sign out |
 | `GET /api/auth/me` | Current session's username/household, or 401 |
+| `GET /api/invites/:token` | Public: which household an invite link leads to, or 404/410 if invalid/expired/used |
+| `POST /api/auth/accept-invite` | Join an existing household via a valid invite (`{token, username, password}`) |
+| `GET /api/households/:name/invites` | List this household's invites (pending/used/expired) with their links |
+| `POST /api/households/:name/invites` | Generate an invite link (`{note?}`, optional label) -- 7-day expiry, not emailed |
+| `DELETE /api/households/:name/invites/:id` | Revoke an invite |
 | `GET /api/households/:name` | Household state: liked/disliked/cooked log/plan (requires being signed into that household) |
 | `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (permanent exclusions) |
 | `POST /api/households/:name/cooked` | Log a recipe as cooked -- de-dupes future suggestions, decrements matching pantry quantities |

@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 
 const SCRYPT_KEYLEN = 64;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 
@@ -29,6 +30,10 @@ function createToken() {
 
 function tokenExpiryIso() {
   return new Date(Date.now() + SESSION_TTL_MS).toISOString();
+}
+
+function inviteExpiryIso() {
+  return new Date(Date.now() + INVITE_TTL_MS).toISOString();
 }
 
 // In-memory login-attempt limiter. This runs as a single small process
@@ -65,7 +70,9 @@ module.exports = {
   verifyPassword,
   createToken,
   tokenExpiryIso,
+  inviteExpiryIso,
   isLoginRateLimited,
   recordLoginAttempt,
   SESSION_TTL_MS,
+  INVITE_TTL_MS,
 };

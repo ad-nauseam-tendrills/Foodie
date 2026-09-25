@@ -117,11 +117,28 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Joining an *existing* household requires one of these -- signup only
+  -- creates a brand-new household. There's no email sending here; a link
+  -- built from the token is generated for a member to send however they
+  -- want (text, email, whatever).
+  CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    note TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    used_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_users_household ON users(household_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_pantry_items_household ON pantry_items(household_id);
   CREATE INDEX IF NOT EXISTS idx_usage_events_household ON usage_events(household_id);
   CREATE INDEX IF NOT EXISTS idx_usage_events_ingredient ON usage_events(household_id, ingredient_id);
+  CREATE INDEX IF NOT EXISTS idx_invites_household ON invites(household_id);
 `);
 
 // Migrations for databases created before these columns existed --
