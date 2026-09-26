@@ -37,7 +37,10 @@ server/
   services/pantry-insights.js  "Make now" / "unlock with X" / restock suggestions
   seed/seed.js       One-time import from TheMealDB
 public/
-  index.html, app.js, styles.css   Frontend (no framework, no build step)
+  index.html, login.js   Landing page: sign in / create household / accept invite / change password
+  app.html, app.js        The actual recipe app -- pantry, search, meal plan, members
+  admin.html, admin.js    Admin-only: create accounts, list households/users
+  styles.css              Shared by all four pages (no framework, no build step)
 data/
   foodie.db          Created automatically on first run (gitignored)
 ```
@@ -111,7 +114,15 @@ recipe app — this is the whole point.
    ```bash
    docker compose exec foodie npm run seed
    ```
-5. The container only listens on `127.0.0.1:3001` (see `docker-compose.yml`)
+5. **Get the initial admin password** (first boot only -- see "Accounts &
+   members" below for what this account is for):
+   ```bash
+   docker compose exec foodie cat data/ADMIN_INITIAL_PASSWORD.txt
+   ```
+   Sign in with household `Admin`, username `admin`, and that password at
+   `/` -- you'll be forced to set a new one immediately. From there, use
+   the Admin panel to create your own real account (and anyone else's).
+6. The container only listens on `127.0.0.1:3001` (see `docker-compose.yml`)
    — it's not reachable from outside the droplet on its own. That's
    deliberate: put a reverse proxy in front of it (next section), the
    same way you would for any other app sharing the box.
@@ -226,9 +237,46 @@ a household shares its liked/disliked ingredients, meal plan, pantry,
 and cooked history, while keeping their own login. Login rate limiting
 (8 attempts / 10 min per IP+household+username) is in-memory and resets
 on restart -- fine for a single small instance, not something that
-survives a process crash mid-attack.
+survives a process crash mid-attack. Signing in, creating a household,
+accepting an invite, and changing a password all live on their own
+landing page (`/`) -- not squeezed into the app's topbar -- and the app
+itself (`/app.html`) redirects there for anything it can't handle
+itself.
 
-**Joining a household is invite-only.** Signing up (`POST
+**Password policy**: at least 14 characters, no other complexity rules
+(no forced uppercase/digit/symbol -- length plus "not an obviously
+guessable word or pattern" does more for real security than mandatory
+special characters do). Rejected: the whole password as one repeated
+chunk (`abcabcabc`), five or more of the same character in a row, common
+words like "password"/"admin"/"qwerty"/"welcome" (see
+`BANNED_WORDS` in `server/services/auth.js`), and the account's own
+username or household name. Applied identically everywhere a password
+is set -- signup, accept-invite, change-password, and admin-created
+accounts.
+
+**The first-ever boot creates an admin account.** There's no email flow
+to send setup instructions through, so on first startup (when no
+`is_admin` user exists yet), the server generates one itself: household
+`Admin`, username `admin`, a random 20-character password. That password
+is printed to the container logs once and saved to
+`data/ADMIN_INITIAL_PASSWORD.txt` -- run `docker compose logs foodie |
+grep -A6 "initial admin"` or `docker compose exec foodie cat
+data/ADMIN_INITIAL_PASSWORD.txt` to find it. Signing in with it forces a
+password change before anything else works -- this is enforced
+server-side (`requireAuth`/`requireAdmin` both reject a
+`must_change_password` account with everything except the
+change-password endpoint itself), not just a frontend redirect that a
+direct API call could skip.
+
+From the **Admin** panel (linked from the account bar for any admin
+user), an admin can create an account directly in any household --
+existing or new -- with a temporary password they set themselves, no
+invite link needed. Those accounts are also forced to change their
+password on first login. This is the direct alternative to the
+invite-link flow: useful when you'd rather hand someone a password
+yourself than send them a link.
+
+**Joining a household is invite-only** the other way (non-admin). Signing up (`POST
 /api/auth/signup`) only ever creates a brand-new household -- if the
 name's already taken, it's rejected rather than letting you sign into
 someone else's. To add someone to an *existing* household, a current
@@ -326,7 +374,8 @@ another one.
 | `POST /api/auth/signup` | Create a *new* household + its first account (`{household, username, password}`) -- 409s if that household already exists |
 | `POST /api/auth/login` | Sign in, sets the session cookie |
 | `POST /api/auth/logout` | Sign out |
-| `GET /api/auth/me` | Current session's username/household, or 401 |
+| `GET /api/auth/me` | Current session's username/household/isAdmin/mustChangePassword, or 401 |
+| `POST /api/auth/change-password` | `{currentPassword, newPassword}` -- works even when must-change-password is set (that's the only thing such an account can do) |
 | `GET /api/invites/:token` | Public: which household an invite link leads to, or 404/410 if invalid/expired/used |
 | `POST /api/auth/accept-invite` | Join an existing household via a valid invite (`{token, username, password}`) |
 | `GET /api/households/:name/invites` | List this household's invites (pending/used/expired) with their links |
@@ -345,6 +394,10 @@ another one.
 | `GET /api/households/:name/pantry/insights` | `{canMakeNow, unlockSuggestions}` computed from the current pantry |
 | `GET /api/households/:name/pantry/restock-suggestions` | Frequently-used ingredients you're currently out of, with your own price history |
 | `GET /api/households/:name/members` | Household members with cook count + top recipes |
+| `GET /api/admin/households` | Admin only: all households with member counts |
+| `GET /api/admin/users` | Admin only: all users across every household |
+| `POST /api/admin/users` | Admin only: create a user directly (`{household, username, password, isAdmin?}`) -- always must-change-password |
+| `DELETE /api/admin/users/:id` | Admin only: delete a user (not yourself) |
 
 ## Roadmap / ideas not built yet
 

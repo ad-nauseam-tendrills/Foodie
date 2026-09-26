@@ -7,7 +7,9 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { canonicalizeIngredientName } = require('./data/ingredient-aliases');
+const { hashPassword } = require('./services/auth');
 
 const DATA_DIR = process.env.FOODIE_DATA_DIR || path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -156,6 +158,8 @@ function addColumnIfMissing(table, column, definition) {
 addColumnIfMissing('recipes', 'tags', 'TEXT');
 addColumnIfMissing('households', 'planned_recipes', `TEXT NOT NULL DEFAULT '[]'`);
 addColumnIfMissing('households', 'pantry_ingredients', `TEXT NOT NULL DEFAULT '[]'`);
+addColumnIfMissing('users', 'is_admin', `INTEGER NOT NULL DEFAULT 0`);
+addColumnIfMissing('users', 'must_change_password', `INTEGER NOT NULL DEFAULT 0`);
 
 // Merges ingredient rows that are really the same thing under different
 // spellings (see server/data/ingredient-aliases.js), for databases that
@@ -291,5 +295,48 @@ function migrateLegacyPantry() {
 }
 
 migrateLegacyPantry();
+
+// First-ever boot needs *someone* who can sign in to provision the rest
+// of the accounts -- there's no email flow, so it can't be "check your
+// inbox." Instead: if no admin exists yet, create one with a random
+// password that's printed once and saved to a file, and require it to
+// be changed on first login rather than leaving a known password sitting
+// around after that.
+function bootstrapAdmin() {
+  if (db.prepare(`SELECT 1 FROM users WHERE is_admin = 1`).get()) return;
+
+  let householdName = 'Admin';
+  if (db.prepare(`SELECT 1 FROM households WHERE name = ? COLLATE NOCASE`).get(householdName)) {
+    householdName = `Admin-${crypto.randomBytes(3).toString('hex')}`;
+  }
+  db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
+  const household = db.prepare(`SELECT id FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
+
+  const password = crypto.randomBytes(15).toString('base64url'); // 20 chars -- comfortably past the 14-char minimum
+  const { salt, hash } = hashPassword(password);
+  db.prepare(
+    `INSERT INTO users (household_id, username, password_hash, password_salt, is_admin, must_change_password)
+     VALUES (?, 'admin', ?, ?, 1, 1)`
+  ).run(household.id, hash, salt);
+
+  const passwordFile = path.join(DATA_DIR, 'ADMIN_INITIAL_PASSWORD.txt');
+  const message =
+    `\n==============================================================\n` +
+    `Foodie: created the initial admin account\n` +
+    `  Household: ${householdName}\n` +
+    `  Username:  admin\n` +
+    `  Password:  ${password}\n` +
+    `You'll be required to set a new password on first login.\n` +
+    `This is also saved to: ${passwordFile}\n` +
+    `==============================================================\n`;
+  console.log(message);
+  try {
+    fs.writeFileSync(passwordFile, message);
+  } catch (err) {
+    console.warn(`Could not write ${passwordFile}: ${err.message}`);
+  }
+}
+
+bootstrapAdmin();
 
 module.exports = db;

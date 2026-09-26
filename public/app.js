@@ -1,9 +1,7 @@
 'use strict';
 
 const state = {
-  auth: null, // { username, household } once signed in
-  authMode: 'login', // 'login' | 'signup'
-  inviteToken: null, // set when the page was opened via a ?invite= link
+  auth: null, // { username, household, isAdmin } once signed in
   liked: [],
   disliked: [],
   planned: [], // recipe IDs currently in the meal plan
@@ -11,24 +9,12 @@ const state = {
 };
 
 const el = {
-  authBar: document.getElementById('authBar'),
-  authForm: document.getElementById('authForm'),
-  authHousehold: document.getElementById('authHousehold'),
-  authUsername: document.getElementById('authUsername'),
-  authPassword: document.getElementById('authPassword'),
-  authSubmitBtn: document.getElementById('authSubmitBtn'),
-  authToggleModeBtn: document.getElementById('authToggleModeBtn'),
-  authHint: document.getElementById('authHint'),
-  inviteAcceptForm: document.getElementById('inviteAcceptForm'),
-  inviteHouseholdLabel: document.getElementById('inviteHouseholdLabel'),
-  inviteUsername: document.getElementById('inviteUsername'),
-  invitePassword: document.getElementById('invitePassword'),
-  inviteAcceptBtn: document.getElementById('inviteAcceptBtn'),
-  inviteCancelBtn: document.getElementById('inviteCancelBtn'),
-  authStatus: document.getElementById('authStatus'),
-  authStatusText: document.getElementById('authStatusText'),
+  accountBar: document.getElementById('accountBar'),
+  accountStatusText: document.getElementById('accountStatusText'),
+  adminLink: document.getElementById('adminLink'),
+  changePasswordLink: document.getElementById('changePasswordLink'),
   signOutBtn: document.getElementById('signOutBtn'),
-  authError: document.getElementById('authError'),
+  signInLink: document.getElementById('signInLink'),
   likeInput: document.getElementById('likeInput'),
   likeTags: document.getElementById('likeTags'),
   likeSuggestions: document.getElementById('likeSuggestions'),
@@ -211,57 +197,41 @@ function postJson(url, body) {
   });
 }
 
-// ---------- Auth -----------------------------------------------------------
+// ---------- Auth (signing in/up/accepting invites lives on the login
+// page -- this is just the signed-in/signed-out indicator + sign-out) --
 
+// Recipe browsing works fine while signed out; only household-scoped
+// actions (save preferences, meal plan, pantry) need an account. This
+// points people at the login page rather than failing silently.
 function warnNotSignedIn(message) {
-  el.authError.textContent = message;
-  el.authError.hidden = false;
-  el.authHousehold.focus();
-  el.authBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.accountStatusText.textContent = message;
+  el.accountStatusText.classList.add('warn');
+  el.accountBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
   setTimeout(() => {
-    el.authError.hidden = true;
+    el.accountStatusText.classList.remove('warn');
+    renderAccountBar();
   }, 3000);
 }
 
-function setAuthMode(mode) {
-  state.authMode = mode;
-  el.authSubmitBtn.textContent = mode === 'signup' ? 'Create a new household' : 'Sign in';
-  el.authToggleModeBtn.textContent =
-    mode === 'signup' ? 'Already have an account? Sign in' : 'Starting a new household? Create one';
-  el.authPassword.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
-  el.authHint.hidden = mode !== 'signup';
-}
-
-async function submitAuth(e) {
-  e.preventDefault();
-  el.authError.hidden = true;
-  const household = el.authHousehold.value.trim();
-  const username = el.authUsername.value.trim();
-  const password = el.authPassword.value;
-  if (!household || !username || !password) {
-    el.authError.textContent = 'Household, username, and password are all required.';
-    el.authError.hidden = false;
-    return;
-  }
-  try {
-    const endpoint = state.authMode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
-    const data = await postJson(endpoint, { household, username, password });
-    el.authPassword.value = '';
-    await onSignedIn(data);
-  } catch (err) {
-    el.authError.textContent = err.message;
-    el.authError.hidden = false;
+function renderAccountBar() {
+  if (state.auth) {
+    el.accountStatusText.textContent = `${state.auth.username} @ ${state.auth.household}`;
+    el.adminLink.hidden = !state.auth.isAdmin;
+    el.changePasswordLink.hidden = false;
+    el.signOutBtn.hidden = false;
+    el.signInLink.hidden = true;
+  } else {
+    el.accountStatusText.textContent = 'Browsing without an account';
+    el.adminLink.hidden = true;
+    el.changePasswordLink.hidden = true;
+    el.signOutBtn.hidden = true;
+    el.signInLink.hidden = false;
   }
 }
 
 async function onSignedIn(data) {
-  state.auth = { username: data.username, household: data.household };
-  state.inviteToken = null;
-  el.authForm.hidden = true;
-  el.authHint.hidden = true;
-  el.inviteAcceptForm.hidden = true;
-  el.authStatus.hidden = false;
-  el.authStatusText.textContent = `${data.username} @ ${data.household}`;
+  state.auth = { username: data.username, household: data.household, isAdmin: !!data.isAdmin };
+  renderAccountBar();
   el.pantryPanel.hidden = false;
   el.insightsPanel.hidden = false;
   el.membersPanel.hidden = false;
@@ -277,9 +247,7 @@ function onSignedOut() {
   state.disliked = [];
   state.planned = [];
   state.pantry = [];
-  el.authForm.hidden = false;
-  el.inviteAcceptForm.hidden = true;
-  el.authStatus.hidden = true;
+  renderAccountBar();
   el.pantryPanel.hidden = true;
   el.insightsPanel.hidden = true;
   el.membersPanel.hidden = true;
@@ -294,61 +262,6 @@ async function signOut() {
   await fetchJson('/api/auth/logout', { method: 'POST' }).catch(() => {});
   onSignedOut();
   findDinner().catch(() => {});
-}
-
-// ---------- Accept-invite flow (?invite=<token> link) -----------------
-
-function clearInviteFromUrl() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete('invite');
-  window.history.replaceState({}, '', url.pathname + url.search + url.hash);
-}
-
-async function checkForInviteLink() {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('invite');
-  if (!token) return;
-
-  try {
-    const invite = await fetchJson(`/api/invites/${encodeURIComponent(token)}`);
-    state.inviteToken = token;
-    el.authForm.hidden = true;
-    el.authHint.hidden = true;
-    el.inviteAcceptForm.hidden = false;
-    el.inviteHouseholdLabel.textContent = `Joining "${invite.household}" -- pick a username and password`;
-  } catch (err) {
-    el.authError.textContent = `That invite link ${err.status === 410 ? 'is no longer valid' : "wasn't found"} (${err.message}).`;
-    el.authError.hidden = false;
-    clearInviteFromUrl();
-  }
-}
-
-function cancelInviteAccept() {
-  state.inviteToken = null;
-  el.inviteAcceptForm.hidden = true;
-  el.authForm.hidden = false;
-  clearInviteFromUrl();
-}
-
-async function submitAcceptInvite(e) {
-  e.preventDefault();
-  el.authError.hidden = true;
-  const username = el.inviteUsername.value.trim();
-  const password = el.invitePassword.value;
-  if (!username || !password) {
-    el.authError.textContent = 'Username and password are both required.';
-    el.authError.hidden = false;
-    return;
-  }
-  try {
-    const data = await postJson('/api/auth/accept-invite', { token: state.inviteToken, username, password });
-    el.invitePassword.value = '';
-    clearInviteFromUrl();
-    await onSignedIn(data);
-  } catch (err) {
-    el.authError.textContent = err.message;
-    el.authError.hidden = false;
-  }
 }
 
 async function loadHouseholdState() {
@@ -380,7 +293,7 @@ async function savePreferences() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ liked: state.liked, disliked: state.disliked }),
   });
-  el.authStatusText.textContent = `${state.auth.username} @ ${state.auth.household} -- saved`;
+  el.accountStatusText.textContent = `${state.auth.username} @ ${state.auth.household} -- saved`;
   renderSavedExclusionsLine();
 }
 
@@ -1046,11 +959,7 @@ wireTagInput({
 
 wireIngredientAutocomplete(el.pantryIngredient, el.pantrySuggestions);
 
-el.authForm.addEventListener('submit', submitAuth);
-el.authToggleModeBtn.addEventListener('click', () => setAuthMode(state.authMode === 'signup' ? 'login' : 'signup'));
 el.signOutBtn.addEventListener('click', signOut);
-el.inviteAcceptForm.addEventListener('submit', submitAcceptInvite);
-el.inviteCancelBtn.addEventListener('click', cancelInviteAccept);
 el.generateInviteBtn.addEventListener('click', generateInvite);
 el.copyInviteLinkBtn.addEventListener('click', copyInviteLink);
 
@@ -1089,7 +998,6 @@ el.tagInput.addEventListener('input', () => {
 });
 
 (async function init() {
-  setAuthMode('login');
   loadCategories().catch(() => {});
   loadAreas().catch(() => {});
   loadTags().catch(() => {});
@@ -1097,10 +1005,17 @@ el.tagInput.addEventListener('input', () => {
 
   try {
     const me = await fetchJson('/api/auth/me');
+    // Shouldn't normally happen -- the login page gates this -- but a
+    // bookmarked/direct link to app.html shouldn't let a
+    // must-change-password account (e.g. a freshly admin-created one)
+    // past this screen either.
+    if (me.mustChangePassword) {
+      window.location.href = '/?changePassword=1';
+      return;
+    }
     await onSignedIn(me);
   } catch {
     onSignedOut();
-    await checkForInviteLink();
     findDinner().catch(() => {}); // browse mode -- show something immediately
   }
 })();

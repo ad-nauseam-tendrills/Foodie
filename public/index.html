@@ -3,188 +3,55 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Foodie — what's for dinner?</title>
+  <title>Foodie — sign in</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body>
-  <header class="topbar">
-    <h1>🍽️ Foodie</h1>
-    <div class="auth-bar" id="authBar">
-      <form id="authForm" class="auth-form">
-        <input id="authHousehold" type="text" placeholder="Household name" autocomplete="organization" />
-        <input id="authUsername" type="text" placeholder="Username" autocomplete="username" />
-        <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
-        <button id="authSubmitBtn" type="submit" class="primary">Sign in</button>
-        <button id="authToggleModeBtn" type="button" class="link-btn">Need an account? Create one</button>
+<body class="landing-body">
+  <main class="landing-main">
+    <div class="landing-card">
+      <h1>🍽️ Foodie</h1>
+      <p class="landing-tagline">Self-hosted, ad-free "what's for dinner?"</p>
+
+      <form id="authForm" class="stacked-form" hidden>
+        <label for="authHousehold">Household</label>
+        <input id="authHousehold" type="text" autocomplete="organization" />
+        <label for="authUsername">Username</label>
+        <input id="authUsername" type="text" autocomplete="username" />
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" autocomplete="current-password" />
+        <p id="authHint" class="form-hint" hidden>Creates a brand-new household. To join an existing one, ask a member for an invite link.</p>
+        <button id="authSubmitBtn" type="submit" class="primary full-width">Sign in</button>
+        <button id="authToggleModeBtn" type="button" class="link-btn">Starting a new household? Create one</button>
       </form>
-      <p id="authHint" class="household-status" hidden>Creates a brand-new household. To join an existing one, ask a member for an invite link.</p>
-      <form id="inviteAcceptForm" class="auth-form" hidden>
-        <span id="inviteHouseholdLabel" class="household-status"></span>
-        <input id="inviteUsername" type="text" placeholder="Username" autocomplete="username" />
-        <input id="invitePassword" type="password" placeholder="Password" autocomplete="new-password" />
-        <button id="inviteAcceptBtn" type="submit" class="primary">Join household</button>
+
+      <form id="inviteAcceptForm" class="stacked-form" hidden>
+        <p id="inviteHouseholdLabel" class="form-hint"></p>
+        <label for="inviteUsername">Username</label>
+        <input id="inviteUsername" type="text" autocomplete="username" />
+        <label for="invitePassword">Password</label>
+        <input id="invitePassword" type="password" autocomplete="new-password" />
+        <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
+        <button id="inviteAcceptBtn" type="submit" class="primary full-width">Join household</button>
         <button id="inviteCancelBtn" type="button" class="link-btn">Not you? Use a different account</button>
       </form>
-      <div id="authStatus" class="auth-status" hidden>
-        <span id="authStatusText" class="household-status"></span>
-        <button id="signOutBtn" class="secondary">Sign out</button>
-      </div>
-      <p id="authError" class="household-status warn" hidden></p>
+
+      <form id="changePasswordForm" class="stacked-form" hidden>
+        <p id="changePasswordIntro" class="form-hint"></p>
+        <label for="currentPasswordInput">Current password</label>
+        <input id="currentPasswordInput" type="password" autocomplete="current-password" />
+        <label for="newPasswordInput">New password</label>
+        <input id="newPasswordInput" type="password" autocomplete="new-password" />
+        <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
+        <button id="changePasswordBtn" type="submit" class="primary full-width">Set new password</button>
+        <button id="changePasswordCancelBtn" type="button" class="link-btn" hidden>Cancel</button>
+      </form>
+
+      <p id="authError" class="form-error" hidden></p>
+      <p id="authSuccess" class="form-success" hidden></p>
+
+      <a id="browseLink" href="/app.html" class="link-btn browse-link">Browse recipes without an account</a>
     </div>
-  </header>
-
-  <main>
-    <section class="panel">
-      <h2>What do you like?</h2>
-      <label for="likeInput">Ingredients you have / like</label>
-      <div class="tag-input" id="likeTagInput">
-        <div class="tags" id="likeTags"></div>
-        <input id="likeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
-      </div>
-      <div class="suggestions" id="likeSuggestions"></div>
-
-      <label for="dislikeInput">Ingredients to avoid, always (e.g. "curry", "coconut")</label>
-      <div class="tag-input" id="dislikeTagInput">
-        <div class="tags" id="dislikeTags"></div>
-        <input id="dislikeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
-      </div>
-      <div class="suggestions" id="dislikeSuggestions"></div>
-      <p id="savedExclusionsLine" class="saved-exclusions-line" hidden></p>
-
-      <div class="actions">
-        <button id="saveBtn" class="secondary">Save exclusions to household</button>
-        <button id="matchBtn" class="primary">What's for dinner?</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Narrow it down</h2>
-      <div class="filters-row">
-        <div class="filter-field">
-          <label for="categorySelect">Category</label>
-          <select id="categorySelect">
-            <option value="">Any</option>
-          </select>
-        </div>
-
-        <div class="filter-field">
-          <label for="areaSelect">Cuisine</label>
-          <select id="areaSelect">
-            <option value="">Any</option>
-          </select>
-        </div>
-
-        <div class="filter-field">
-          <label for="tagInput">Tag (e.g. Soup, Curry, Stew)</label>
-          <input id="tagInput" type="text" placeholder="type a tag…" autocomplete="off" list="tagOptions" />
-          <datalist id="tagOptions"></datalist>
-        </div>
-
-        <div class="filter-field filter-field-checkbox">
-          <label class="checkbox-label">
-            <input id="quickToggle" type="checkbox" />
-            <span>⚡ Quick &amp; easy only</span>
-          </label>
-        </div>
-
-        <div class="filter-field filter-field-checkbox">
-          <label class="checkbox-label">
-            <input id="seasonalToggle" type="checkbox" />
-            <span id="seasonalLabel">Only what's in season</span>
-          </label>
-          <button id="seasonalInfoBtn" type="button" class="link-btn">what's in season?</button>
-        </div>
-      </div>
-      <div id="seasonalInfoBox" class="seasonal-info-box" hidden></div>
-    </section>
-
-    <section class="panel">
-      <div class="results-header">
-        <h2>Suggestions</h2>
-        <span id="resultsCount" class="muted"></span>
-      </div>
-      <div id="results" class="results"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Meal plan</h2>
-      <p class="muted">Add recipes below, then their ingredients combine into one grocery list. Synced to your household, like everything else here.</p>
-      <div id="plannedList" class="planned-list"></div>
-      <p id="planEmptyState" class="empty-state">Nothing planned yet -- click "Add to plan" on a recipe.</p>
-
-      <div id="groceryListWrap" class="grocery-list-wrap" hidden>
-        <h3>Grocery list</h3>
-        <p class="muted">Anything already in your pantry below is left off automatically.</p>
-        <div id="groceryList" class="grocery-list"></div>
-      </div>
-    </section>
-
-    <section class="panel" id="pantryPanel" hidden>
-      <h2>Pantry</h2>
-      <p class="muted">What you actually have on hand -- powers "what can I make right now" below and keeps stocked items off your grocery list.</p>
-      <div class="pantry-add-row">
-        <div class="tag-input" id="pantryIngredientInput" style="flex: 2; min-width: 160px;">
-          <input id="pantryIngredient" type="text" placeholder="ingredient…" autocomplete="off" />
-        </div>
-        <div id="pantrySuggestions" class="suggestions"></div>
-        <input id="pantryQuantity" type="number" placeholder="qty" step="any" />
-        <input id="pantryUnit" type="text" placeholder="unit" />
-        <input id="pantryPrice" type="number" placeholder="$ paid" step="0.01" min="0" />
-        <input id="pantryStore" type="text" placeholder="store" />
-        <button id="pantryAddBtn" class="secondary" type="button">+ Add</button>
-      </div>
-      <ul id="pantryInventoryList" class="pantry-inventory-list"></ul>
-      <p id="pantryEmptyState" class="empty-state">Nothing in your pantry yet -- add what you've got.</p>
-    </section>
-
-    <section class="panel" id="insightsPanel" hidden>
-      <h2>From your pantry</h2>
-
-      <h3>You can make right now</h3>
-      <div id="canMakeNowList" class="results"></div>
-      <p id="canMakeNowEmpty" class="empty-state">Nothing at 100% yet -- add more to your pantry.</p>
-
-      <h3>Add one thing, unlock a recipe</h3>
-      <ul id="unlockList" class="unlock-list"></ul>
-      <p id="unlockEmpty" class="empty-state">Nothing is one ingredient away right now.</p>
-
-      <h3>You keep running out of…</h3>
-      <ul id="restockList" class="restock-list"></ul>
-      <p id="restockEmpty" class="empty-state">Not enough usage history yet to suggest restocks.</p>
-    </section>
-
-    <section class="panel" id="membersPanel" hidden>
-      <h2>Household members</h2>
-      <ul id="membersList" class="members-list"></ul>
-
-      <h3>Invite someone</h3>
-      <p class="muted">Generates a link that adds them to this household -- no email is sent by the app, copy it and send it yourself however you like.</p>
-      <div class="invite-generate-row">
-        <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
-        <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
-      </div>
-      <div id="inviteLinkBox" class="invite-link-box" hidden>
-        <input id="inviteLinkOutput" type="text" readonly />
-        <button id="copyInviteLinkBtn" type="button">Copy</button>
-      </div>
-      <ul id="pendingInvitesList" class="pending-invites-list"></ul>
-    </section>
   </main>
-
-  <div id="modalOverlay" class="modal-overlay hidden">
-    <div class="modal">
-      <button id="modalClose" class="modal-close" aria-label="Close">✕</button>
-      <div id="modalBody"></div>
-    </div>
-  </div>
-
-  <footer>
-    <p>
-      Self-hosted &amp; ad-free. Ingredient matching only, no AI calls, no data leaves this server.
-      Recipe data courtesy of <a href="https://www.themealdb.com/" target="_blank" rel="noopener">TheMealDB</a>.
-    </p>
-  </footer>
-
-  <script src="/app.js"></script>
+  <script src="/login.js"></script>
 </body>
 </html>

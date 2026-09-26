@@ -14,6 +14,14 @@
 
 * { box-sizing: border-box; }
 
+/* A class that also sets `display` (e.g. `.auth-form { display: flex }`)
+   has the same specificity as the browser's own `[hidden] { display:
+   none }` rule, and being an author rule it wins the tie -- so an
+   element toggled via `el.foo.hidden = true` silently stays visible
+   whenever its own class sets a non-`none` display. This forces
+   `hidden` to always win, regardless of what else styles the element. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -34,42 +42,15 @@ body {
 
 .topbar h1 { margin: 0; font-size: 1.4rem; }
 
-.household-bar,
-.auth-bar {
+.account-bar {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
-}
-
-.auth-form {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.auth-form input {
-  font: inherit;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.45rem 0.6rem;
-  width: 140px;
-}
-
-.auth-status {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
 }
 
 .household-status { font-size: 0.85rem; color: var(--muted); }
 .household-status.warn { color: var(--bad); font-weight: 600; }
-
-#householdInput.warn {
-  border-color: var(--bad);
-  box-shadow: 0 0 0 2px rgba(179, 71, 71, 0.2);
-}
 
 main {
   max-width: 900px;
@@ -660,3 +641,105 @@ footer a { color: var(--accent); }
 }
 
 .pending-invite-item button:hover { border-color: var(--bad); color: var(--bad); }
+
+/* ---------- Landing / login page ---------- */
+
+.landing-body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.landing-main { width: 100%; display: flex; justify-content: center; }
+
+.landing-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2rem;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+
+.landing-card h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+.landing-tagline { margin: 0 0 1.5rem; color: var(--muted); font-size: 0.9rem; }
+
+.stacked-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  text-align: left;
+}
+
+.stacked-form label { margin: 0.4rem 0 0; }
+
+.stacked-form input[type="text"],
+.stacked-form input[type="password"] {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.7rem;
+  width: 100%;
+}
+
+.full-width { width: 100%; }
+
+.form-hint { font-size: 0.8rem; color: var(--muted); margin: 0.2rem 0; }
+.form-error { font-size: 0.85rem; color: var(--bad); font-weight: 600; margin: 1rem 0 0; }
+.form-success { font-size: 0.85rem; color: var(--good); font-weight: 600; margin: 1rem 0 0; }
+
+.browse-link {
+  display: block;
+  margin-top: 1.5rem;
+  font-size: 0.85rem;
+}
+
+/* ---------- Admin panel ---------- */
+
+.admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.admin-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.admin-list-item .admin-badges { display: flex; gap: 0.35rem; }
+
+.admin-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #f1e6da;
+  color: var(--text);
+}
+
+.admin-badge.admin { background: #e8f1e3; color: var(--good); }
+.admin-badge.must-change { background: #f7ece0; color: var(--accent); }
+
+.admin-list-item button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.admin-list-item button:hover { border-color: var(--bad); color: var(--bad); }

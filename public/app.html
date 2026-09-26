@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foodie — what's for dinner?</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🍽️ Foodie</h1>
+    <div id="accountBar" class="account-bar">
+      <span id="accountStatusText" class="household-status"></span>
+      <a id="adminLink" href="/admin.html" class="link-btn" hidden>Admin</a>
+      <a id="changePasswordLink" href="/?changePassword=1" class="link-btn" hidden>Change password</a>
+      <button id="signOutBtn" class="secondary" hidden>Sign out</button>
+      <a id="signInLink" href="/" class="link-btn" hidden>Sign in</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>What do you like?</h2>
+      <label for="likeInput">Ingredients you have / like</label>
+      <div class="tag-input" id="likeTagInput">
+        <div class="tags" id="likeTags"></div>
+        <input id="likeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
+      </div>
+      <div class="suggestions" id="likeSuggestions"></div>
+
+      <label for="dislikeInput">Ingredients to avoid, always (e.g. "curry", "coconut")</label>
+      <div class="tag-input" id="dislikeTagInput">
+        <div class="tags" id="dislikeTags"></div>
+        <input id="dislikeInput" type="text" placeholder="type an ingredient, press Enter…" autocomplete="off" />
+      </div>
+      <div class="suggestions" id="dislikeSuggestions"></div>
+      <p id="savedExclusionsLine" class="saved-exclusions-line" hidden></p>
+
+      <div class="actions">
+        <button id="saveBtn" class="secondary">Save exclusions to household</button>
+        <button id="matchBtn" class="primary">What's for dinner?</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Narrow it down</h2>
+      <div class="filters-row">
+        <div class="filter-field">
+          <label for="categorySelect">Category</label>
+          <select id="categorySelect">
+            <option value="">Any</option>
+          </select>
+        </div>
+
+        <div class="filter-field">
+          <label for="areaSelect">Cuisine</label>
+          <select id="areaSelect">
+            <option value="">Any</option>
+          </select>
+        </div>
+
+        <div class="filter-field">
+          <label for="tagInput">Tag (e.g. Soup, Curry, Stew)</label>
+          <input id="tagInput" type="text" placeholder="type a tag…" autocomplete="off" list="tagOptions" />
+          <datalist id="tagOptions"></datalist>
+        </div>
+
+        <div class="filter-field filter-field-checkbox">
+          <label class="checkbox-label">
+            <input id="quickToggle" type="checkbox" />
+            <span>⚡ Quick &amp; easy only</span>
+          </label>
+        </div>
+
+        <div class="filter-field filter-field-checkbox">
+          <label class="checkbox-label">
+            <input id="seasonalToggle" type="checkbox" />
+            <span id="seasonalLabel">Only what's in season</span>
+          </label>
+          <button id="seasonalInfoBtn" type="button" class="link-btn">what's in season?</button>
+        </div>
+      </div>
+      <div id="seasonalInfoBox" class="seasonal-info-box" hidden></div>
+    </section>
+
+    <section class="panel">
+      <div class="results-header">
+        <h2>Suggestions</h2>
+        <span id="resultsCount" class="muted"></span>
+      </div>
+      <div id="results" class="results"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Meal plan</h2>
+      <p class="muted">Add recipes below, then their ingredients combine into one grocery list. Synced to your household, like everything else here.</p>
+      <div id="plannedList" class="planned-list"></div>
+      <p id="planEmptyState" class="empty-state">Nothing planned yet -- click "Add to plan" on a recipe.</p>
+
+      <div id="groceryListWrap" class="grocery-list-wrap" hidden>
+        <h3>Grocery list</h3>
+        <p class="muted">Anything already in your pantry below is left off automatically.</p>
+        <div id="groceryList" class="grocery-list"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="pantryPanel" hidden>
+      <h2>Pantry</h2>
+      <p class="muted">What you actually have on hand -- powers "what can I make right now" below and keeps stocked items off your grocery list.</p>
+      <div class="pantry-add-row">
+        <div class="tag-input" id="pantryIngredientInput" style="flex: 2; min-width: 160px;">
+          <input id="pantryIngredient" type="text" placeholder="ingredient…" autocomplete="off" />
+        </div>
+        <div id="pantrySuggestions" class="suggestions"></div>
+        <input id="pantryQuantity" type="number" placeholder="qty" step="any" />
+        <input id="pantryUnit" type="text" placeholder="unit" />
+        <input id="pantryPrice" type="number" placeholder="$ paid" step="0.01" min="0" />
+        <input id="pantryStore" type="text" placeholder="store" />
+        <button id="pantryAddBtn" class="secondary" type="button">+ Add</button>
+      </div>
+      <ul id="pantryInventoryList" class="pantry-inventory-list"></ul>
+      <p id="pantryEmptyState" class="empty-state">Nothing in your pantry yet -- add what you've got.</p>
+    </section>
+
+    <section class="panel" id="insightsPanel" hidden>
+      <h2>From your pantry</h2>
+
+      <h3>You can make right now</h3>
+      <div id="canMakeNowList" class="results"></div>
+      <p id="canMakeNowEmpty" class="empty-state">Nothing at 100% yet -- add more to your pantry.</p>
+
+      <h3>Add one thing, unlock a recipe</h3>
+      <ul id="unlockList" class="unlock-list"></ul>
+      <p id="unlockEmpty" class="empty-state">Nothing is one ingredient away right now.</p>
+
+      <h3>You keep running out of…</h3>
+      <ul id="restockList" class="restock-list"></ul>
+      <p id="restockEmpty" class="empty-state">Not enough usage history yet to suggest restocks.</p>
+    </section>
+
+    <section class="panel" id="membersPanel" hidden>
+      <h2>Household members</h2>
+      <ul id="membersList" class="members-list"></ul>
+
+      <h3>Invite someone</h3>
+      <p class="muted">Generates a link that adds them to this household -- no email is sent by the app, copy it and send it yourself however you like.</p>
+      <div class="invite-generate-row">
+        <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
+        <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
+      </div>
+      <div id="inviteLinkBox" class="invite-link-box" hidden>
+        <input id="inviteLinkOutput" type="text" readonly />
+        <button id="copyInviteLinkBtn" type="button">Copy</button>
+      </div>
+      <ul id="pendingInvitesList" class="pending-invites-list"></ul>
+    </section>
+  </main>
+
+  <div id="modalOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <button id="modalClose" class="modal-close" aria-label="Close">✕</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <footer>
+    <p>
+      Self-hosted &amp; ad-free. Ingredient matching only, no AI calls, no data leaves this server.
+      Recipe data courtesy of <a href="https://www.themealdb.com/" target="_blank" rel="noopener">TheMealDB</a>.
+    </p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -14,6 +14,7 @@ const {
   createToken,
   tokenExpiryIso,
   inviteExpiryIso,
+  validatePassword,
   isLoginRateLimited,
   recordLoginAttempt,
   SESSION_TTL_MS,
@@ -94,7 +95,8 @@ function getSessionUser(req) {
   const row = db
     .prepare(
       `SELECT u.id AS id, u.username AS username, u.household_id AS householdId, h.name AS householdName,
-              s.expires_at AS expiresAt
+              u.is_admin AS isAdmin, u.must_change_password AS mustChangePassword, u.password_salt AS passwordSalt,
+              u.password_hash AS passwordHash, s.expires_at AS expiresAt
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN households h ON h.id = u.household_id
@@ -106,12 +108,31 @@ function getSessionUser(req) {
     db.prepare(`DELETE FROM sessions WHERE token = ?`).run(token);
     return null;
   }
-  return row;
+  return { ...row, isAdmin: !!row.isAdmin, mustChangePassword: !!row.mustChangePassword };
 }
 
+// Blocking this server-side (not just redirecting client-side from
+// login.html) matters because the accounts most likely to still have
+// must_change_password set are the most sensitive ones -- the bootstrap
+// admin, and anyone an admin just provisioned -- so a leaked initial
+// password shouldn't be usable for anything beyond setting a real one.
 function requireAuth(req, res, next) {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.mustChangePassword) {
+    return res.status(403).json({ error: 'Password change required', mustChangePassword: true });
+  }
+  req.user = user;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.mustChangePassword) {
+    return res.status(403).json({ error: 'Password change required', mustChangePassword: true });
+  }
+  if (!user.isAdmin) return res.status(403).json({ error: 'Admin access required' });
   req.user = user;
   next();
 }
@@ -125,6 +146,17 @@ function sameHousehold(req, res) {
     return false;
   }
   return true;
+}
+
+function authResponseBody(user, extra) {
+  return {
+    ok: true,
+    username: user.username,
+    household: user.householdName || user.household,
+    isAdmin: !!user.isAdmin,
+    mustChangePassword: !!user.mustChangePassword,
+    ...extra,
+  };
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{2,30}$/;
@@ -141,7 +173,8 @@ app.post('/api/auth/signup', (req, res) => {
   if (!USERNAME_RE.test(username)) {
     return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
   }
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const passwordError = validatePassword(password, { username, household: householdName });
+  if (passwordError) return res.status(400).json({ error: passwordError });
 
   const existingHousehold = db.prepare(`SELECT 1 FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
   if (existingHousehold) {
@@ -163,7 +196,7 @@ app.post('/api/auth/signup', (req, res) => {
     tokenExpiryIso()
   );
   setSessionCookie(req, res, token);
-  res.json({ ok: true, username, household: household.name });
+  res.json(authResponseBody({ username, householdName: household.name, isAdmin: false, mustChangePassword: false }));
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -187,7 +220,7 @@ app.post('/api/auth/login', (req, res) => {
   const token = createToken();
   db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`).run(token, user.id, tokenExpiryIso());
   setSessionCookie(req, res, token);
-  res.json({ ok: true, username: user.username, household: household.name });
+  res.json(authResponseBody({ username: user.username, householdName: household.name, isAdmin: user.is_admin, mustChangePassword: user.must_change_password }));
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -197,10 +230,38 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// For any already-signed-in user (forced after an admin-provisioned
+// login, or opted into any time from account settings).
+// Deliberately NOT behind requireAuth -- that middleware blocks any
+// account with must_change_password set, which is exactly the account
+// that needs to reach this endpoint. Just needs a valid session.
+app.post('/api/auth/change-password', (req, res) => {
+  const sessionUser = getSessionUser(req);
+  if (!sessionUser) return res.status(401).json({ error: 'Not signed in' });
+
+  const currentPassword = String((req.body && req.body.currentPassword) || '');
+  const newPassword = String((req.body && req.body.newPassword) || '');
+
+  const user = db.prepare(`SELECT * FROM users WHERE id = ?`).get(sessionUser.id);
+  if (!verifyPassword(currentPassword, user.password_salt, user.password_hash)) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+  const passwordError = validatePassword(newPassword, { username: user.username, household: sessionUser.householdName });
+  if (passwordError) return res.status(400).json({ error: passwordError });
+
+  const { salt, hash } = hashPassword(newPassword);
+  db.prepare(`UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0 WHERE id = ?`).run(
+    hash,
+    salt,
+    user.id
+  );
+  res.json({ ok: true });
+});
+
 app.get('/api/auth/me', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
-  res.json({ username: user.username, household: user.householdName });
+  res.json(authResponseBody(user));
 });
 
 // --- Invites -----------------------------------------------------------
@@ -240,7 +301,6 @@ app.post('/api/auth/accept-invite', (req, res) => {
   if (!USERNAME_RE.test(username)) {
     return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
   }
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
   const invite = db.prepare(`SELECT * FROM invites WHERE token = ?`).get(token);
   if (!invite) return res.status(404).json({ error: 'Invite not found' });
@@ -248,6 +308,10 @@ app.post('/api/auth/accept-invite', (req, res) => {
   if (status !== 'pending') {
     return res.status(410).json({ error: status === 'used' ? 'This invite has already been used' : 'This invite has expired' });
   }
+  const household = db.prepare(`SELECT name FROM households WHERE id = ?`).get(invite.household_id);
+
+  const passwordError = validatePassword(password, { username, household: household.name });
+  if (passwordError) return res.status(400).json({ error: passwordError });
 
   const existingUser = db
     .prepare(`SELECT 1 FROM users WHERE household_id = ? AND username = ? COLLATE NOCASE`)
@@ -271,8 +335,7 @@ app.post('/api/auth/accept-invite', (req, res) => {
     tokenExpiryIso()
   );
   setSessionCookie(req, res, sessionToken);
-  const household = db.prepare(`SELECT name FROM households WHERE id = ?`).get(invite.household_id);
-  res.json({ ok: true, username, household: household.name });
+  res.json(authResponseBody({ username, householdName: household.name, isAdmin: false, mustChangePassword: false }));
 });
 
 app.get('/api/households/:name/invites', requireAuth, (req, res) => {
@@ -319,6 +382,83 @@ app.post('/api/households/:name/invites', requireAuth, (req, res) => {
 app.delete('/api/households/:name/invites/:id', requireAuth, (req, res) => {
   if (!sameHousehold(req, res)) return;
   db.prepare(`DELETE FROM invites WHERE id = ? AND household_id = ?`).run(req.params.id, req.user.householdId);
+  res.json({ ok: true });
+});
+
+// --- Admin ---------------------------------------------------------------
+//
+// A site-wide role (`users.is_admin`), separate from any one household,
+// for provisioning accounts directly -- an alternative to the invite
+// flow for whoever runs the server. Every account an admin creates is
+// forced to change its password on first login.
+
+app.get('/api/admin/households', requireAdmin, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT h.id AS id, h.name AS name, COUNT(u.id) AS memberCount
+       FROM households h
+       LEFT JOIN users u ON u.household_id = h.id
+       GROUP BY h.id
+       ORDER BY h.name COLLATE NOCASE`
+    )
+    .all();
+  res.json(rows);
+});
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT u.id AS id, u.username AS username, h.name AS household, u.is_admin AS isAdmin,
+              u.must_change_password AS mustChangePassword, u.created_at AS createdAt
+       FROM users u
+       JOIN households h ON h.id = u.household_id
+       ORDER BY h.name COLLATE NOCASE, u.username COLLATE NOCASE`
+    )
+    .all();
+  res.json(rows.map((r) => ({ ...r, isAdmin: !!r.isAdmin, mustChangePassword: !!r.mustChangePassword })));
+});
+
+// Admin can target an existing household by name (unlike self-signup,
+// which only ever creates new ones) -- this is the direct alternative to
+// the invite-link flow.
+app.post('/api/admin/users', requireAdmin, (req, res) => {
+  const householdName = String((req.body && req.body.household) || '').trim();
+  const username = String((req.body && req.body.username) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  const makeAdmin = !!(req.body && req.body.isAdmin);
+
+  if (!householdName) return res.status(400).json({ error: 'Household name is required' });
+  if (!USERNAME_RE.test(username)) {
+    return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
+  }
+  const passwordError = validatePassword(password, { username, household: householdName });
+  if (passwordError) return res.status(400).json({ error: passwordError });
+
+  let household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
+  if (!household) {
+    db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
+    household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
+  }
+
+  const existingUser = db
+    .prepare(`SELECT 1 FROM users WHERE household_id = ? AND username = ? COLLATE NOCASE`)
+    .get(household.id, username);
+  if (existingUser) return res.status(409).json({ error: 'That username is already taken in this household' });
+
+  const { salt, hash } = hashPassword(password);
+  db.prepare(
+    `INSERT INTO users (household_id, username, password_hash, password_salt, is_admin, must_change_password)
+     VALUES (?, ?, ?, ?, ?, 1)`
+  ).run(household.id, username, hash, salt, makeAdmin ? 1 : 0);
+
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.id === req.user.id) return res.status(400).json({ error: "Can't delete your own account" });
+  db.prepare(`DELETE FROM users WHERE id = ?`).run(target.id);
   res.json({ ok: true });
 });
 
