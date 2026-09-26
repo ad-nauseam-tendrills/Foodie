@@ -95,8 +95,7 @@ function getSessionUser(req) {
   const row = db
     .prepare(
       `SELECT u.id AS id, u.username AS username, u.household_id AS householdId, h.name AS householdName,
-              u.is_admin AS isAdmin, u.must_change_password AS mustChangePassword, u.password_salt AS passwordSalt,
-              u.password_hash AS passwordHash, s.expires_at AS expiresAt
+              u.is_admin AS isAdmin, u.must_change_password AS mustChangePassword, s.expires_at AS expiresAt
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN households h ON h.id = u.household_id
@@ -165,21 +164,39 @@ const USERNAME_RE = /^[a-zA-Z0-9_-]{2,30}$/;
 // an invite (below). Without this, anyone who knew (or guessed) a
 // household's name could just sign themselves into it.
 app.post('/api/auth/signup', (req, res) => {
+  // Not brute-forcing a login here (there's nothing to guess into yet),
+  // but with no rate limit at all this endpoint is a free way to spam
+  // the household/user tables and burn scrypt CPU time -- worth the same
+  // per-IP throttle as login.
+  const rateLimitKey = `signup:${req.ip}`;
+  if (isLoginRateLimited(rateLimitKey)) {
+    return res.status(429).json({ error: 'Too many attempts -- wait a few minutes and try again' });
+  }
+
   const householdName = String((req.body && req.body.household) || '').trim();
   const username = String((req.body && req.body.username) || '').trim();
   const password = String((req.body && req.body.password) || '');
 
-  if (!householdName) return res.status(400).json({ error: 'Household name is required' });
+  if (!householdName) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(400).json({ error: 'Household name is required' });
+  }
   if (!USERNAME_RE.test(username)) {
+    recordLoginAttempt(rateLimitKey, false);
     return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
   }
   const passwordError = validatePassword(password, { username, household: householdName });
-  if (passwordError) return res.status(400).json({ error: passwordError });
+  if (passwordError) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(400).json({ error: passwordError });
+  }
 
   const existingHousehold = db.prepare(`SELECT 1 FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
   if (existingHousehold) {
+    recordLoginAttempt(rateLimitKey, false);
     return res.status(409).json({ error: 'That household already exists -- ask a member for an invite link' });
   }
+  recordLoginAttempt(rateLimitKey, true);
 
   db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
   const household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
@@ -226,6 +243,18 @@ app.post('/api/auth/login', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (token) db.prepare(`DELETE FROM sessions WHERE token = ?`).run(token);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// Every session for this account, not just the current browser -- for
+// "I left myself logged in somewhere" or a lost/stolen device. Works the
+// same as plain logout with must_change_password set, since walking away
+// from every session is always safe to allow.
+app.post('/api/auth/logout-all', (req, res) => {
+  const sessionUser = getSessionUser(req);
+  if (!sessionUser) return res.status(401).json({ error: 'Not signed in' });
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(sessionUser.id);
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -293,30 +322,47 @@ app.get('/api/invites/:token', (req, res) => {
 });
 
 app.post('/api/auth/accept-invite', (req, res) => {
+  const rateLimitKey = `accept-invite:${req.ip}`;
+  if (isLoginRateLimited(rateLimitKey)) {
+    return res.status(429).json({ error: 'Too many attempts -- wait a few minutes and try again' });
+  }
+
   const token = String((req.body && req.body.token) || '').trim();
   const username = String((req.body && req.body.username) || '').trim();
   const password = String((req.body && req.body.password) || '');
 
   if (!token) return res.status(400).json({ error: 'Invite token is required' });
   if (!USERNAME_RE.test(username)) {
+    recordLoginAttempt(rateLimitKey, false);
     return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
   }
 
   const invite = db.prepare(`SELECT * FROM invites WHERE token = ?`).get(token);
-  if (!invite) return res.status(404).json({ error: 'Invite not found' });
+  if (!invite) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(404).json({ error: 'Invite not found' });
+  }
   const status = inviteStatus(invite);
   if (status !== 'pending') {
+    recordLoginAttempt(rateLimitKey, false);
     return res.status(410).json({ error: status === 'used' ? 'This invite has already been used' : 'This invite has expired' });
   }
   const household = db.prepare(`SELECT name FROM households WHERE id = ?`).get(invite.household_id);
 
   const passwordError = validatePassword(password, { username, household: household.name });
-  if (passwordError) return res.status(400).json({ error: passwordError });
+  if (passwordError) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(400).json({ error: passwordError });
+  }
 
   const existingUser = db
     .prepare(`SELECT 1 FROM users WHERE household_id = ? AND username = ? COLLATE NOCASE`)
     .get(invite.household_id, username);
-  if (existingUser) return res.status(409).json({ error: 'That username is already taken in this household' });
+  if (existingUser) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(409).json({ error: 'That username is already taken in this household' });
+  }
+  recordLoginAttempt(rateLimitKey, true);
 
   const { salt, hash } = hashPassword(password);
   const result = db
@@ -462,6 +508,30 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// There's no self-service "forgot password" (no email to send a link
+// through) -- this is the fallback: an admin sets a new temporary
+// password directly, and the account is forced to change it again on
+// next login, same as a freshly-created one. Also invalidates every
+// existing session for that account, since the old password (and
+// whoever had it) shouldn't still be able to act as them.
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+  const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const password = String((req.body && req.body.password) || '');
+  const household = db.prepare(`SELECT name FROM households WHERE id = ?`).get(target.household_id);
+  const passwordError = validatePassword(password, { username: target.username, household: household.name });
+  if (passwordError) return res.status(400).json({ error: passwordError });
+
+  const { salt, hash } = hashPassword(password);
+  db.prepare(
+    `UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 1 WHERE id = ?`
+  ).run(hash, salt, target.id);
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(target.id);
+
+  res.json({ ok: true });
+});
+
 // --- Ingredients (autocomplete) ---------------------------------------
 
 app.get('/api/ingredients', (req, res) => {
@@ -527,7 +597,9 @@ app.get('/api/recipes/match', (req, res) => {
   const category = String(req.query.category || '').trim() || null;
   const tag = String(req.query.tag || '').trim() || null;
   const area = String(req.query.area || '').trim() || null;
+  const nameQuery = String(req.query.q || '').trim() || null;
   const seasonalOnly = req.query.seasonal === 'true';
+  const favoriteOnly = req.query.favoritesOnly === 'true';
 
   // If someone happens to be signed in, lightly de-emphasize what their
   // own household cooked in the last 10 days -- purely a ranking nudge,
@@ -543,6 +615,19 @@ app.get('/api/recipes/match', (req, res) => {
     }
   }
 
+  // Favorites are per-household, so which household's star this reflects
+  // is whichever one the caller is currently looking at -- their own by
+  // default, but could be any household they're browsing read-only.
+  let favoriteIds = new Set();
+  const favoritesHousehold = String(req.query.household || '').trim();
+  if (favoritesHousehold) {
+    const household = db.prepare(`SELECT id FROM households WHERE name = ? COLLATE NOCASE`).get(favoritesHousehold);
+    if (household) {
+      const row = db.prepare(`SELECT favorite_recipes FROM households WHERE id = ?`).get(household.id);
+      favoriteIds = new Set(JSON.parse(row.favorite_recipes || '[]'));
+    }
+  }
+
   // "Show me what's seasonal" also lightly re-ranks results toward
   // seasonal ingredients even when the filter isn't strictly on.
   const seasonalKeywords = keywordsForSeason(getCurrentSeason());
@@ -554,6 +639,9 @@ app.get('/api/recipes/match', (req, res) => {
     category,
     tag,
     area,
+    nameQuery,
+    favoriteIds,
+    favoriteOnly,
     seasonalKeywords,
     seasonalOnly,
   });
@@ -574,8 +662,39 @@ app.get('/api/recipes/:id', (req, res) => {
   res.json({ ...recipe, ingredients });
 });
 
-// --- Households (everything below requires being signed into the
-// household it's acting on) -----------------------------------------------
+// --- Households --------------------------------------------------------
+//
+// Read access (this section's GET routes) is open to any signed-in
+// user, not just a household's own members -- full cross-household
+// visibility is a deliberate feature (see README), not an oversight.
+// Every write (preferences, cooked, plan, pantry, favorites, invites)
+// still requires `sameHousehold` below. Invites are the one read that
+// stays same-household-only too: a token is a credential that lets
+// someone join, not household "data" to browse.
+
+function resolveHousehold(name) {
+  return db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(name);
+}
+
+function requireHouseholdView(req, res, next) {
+  const household = resolveHousehold(req.params.name);
+  if (!household) return res.status(404).json({ error: 'Household not found' });
+  req.viewHousehold = household;
+  next();
+}
+
+app.get('/api/households', requireAuth, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT h.name AS name, COUNT(u.id) AS memberCount
+       FROM households h
+       LEFT JOIN users u ON u.household_id = h.id
+       GROUP BY h.id
+       ORDER BY h.name COLLATE NOCASE`
+    )
+    .all();
+  res.json(rows);
+});
 
 function householdStateJson(householdId, householdName) {
   const row = db.prepare(`SELECT * FROM households WHERE id = ?`).get(householdId);
@@ -585,12 +704,12 @@ function householdStateJson(householdId, householdName) {
     disliked: JSON.parse(row.disliked_ingredients),
     cookedLog: JSON.parse(row.cooked_log),
     planned: JSON.parse(row.planned_recipes || '[]'),
+    favorites: JSON.parse(row.favorite_recipes || '[]'),
   };
 }
 
-app.get('/api/households/:name', requireAuth, (req, res) => {
-  if (!sameHousehold(req, res)) return;
-  res.json(householdStateJson(req.user.householdId, req.user.householdName));
+app.get('/api/households/:name', requireAuth, requireHouseholdView, (req, res) => {
+  res.json(householdStateJson(req.viewHousehold.id, req.viewHousehold.name));
 });
 
 app.put('/api/households/:name/preferences', requireAuth, (req, res) => {
@@ -672,15 +791,45 @@ app.delete('/api/households/:name/plan/:recipeId', requireAuth, (req, res) => {
   res.json({ ok: true, planned });
 });
 
+// Favorites/saved recipes -- distinct from the meal plan (which is
+// "we're cooking this soon" and clears itself off the grocery list once
+// it's built) and from cooked history (a log of the past). A favorite is
+// just "keep this around," the same feature every recipe app (Paprika,
+// Mealime, Whisk) has under some name.
+app.post('/api/households/:name/favorites', requireAuth, (req, res) => {
+  if (!sameHousehold(req, res)) return;
+  const recipeId = Number(req.body.recipeId);
+  if (!recipeId) return res.status(400).json({ error: 'recipeId is required' });
+  if (!db.prepare(`SELECT 1 FROM recipes WHERE id = ?`).get(recipeId)) {
+    return res.status(404).json({ error: 'Recipe not found' });
+  }
+
+  const row = db.prepare(`SELECT favorite_recipes FROM households WHERE id = ?`).get(req.user.householdId);
+  const favorites = JSON.parse(row.favorite_recipes || '[]');
+  if (!favorites.includes(recipeId)) favorites.push(recipeId);
+
+  db.prepare(`UPDATE households SET favorite_recipes = ? WHERE id = ?`).run(JSON.stringify(favorites), req.user.householdId);
+  res.json({ ok: true, favorites });
+});
+
+app.delete('/api/households/:name/favorites/:recipeId', requireAuth, (req, res) => {
+  if (!sameHousehold(req, res)) return;
+  const recipeId = Number(req.params.recipeId);
+  const row = db.prepare(`SELECT favorite_recipes FROM households WHERE id = ?`).get(req.user.householdId);
+  const favorites = JSON.parse(row.favorite_recipes || '[]').filter((id) => id !== recipeId);
+
+  db.prepare(`UPDATE households SET favorite_recipes = ? WHERE id = ?`).run(JSON.stringify(favorites), req.user.householdId);
+  res.json({ ok: true, favorites });
+});
+
 // The grocery list is generated fresh from the current plan each time --
 // there's no separate stored list to fall out of sync with the plan.
 // Grouped into rough shopping sections (Produce, Meat & Seafood, ...)
 // and with anything already in the pantry filtered out.
-app.get('/api/households/:name/grocery-list', requireAuth, (req, res) => {
-  if (!sameHousehold(req, res)) return;
-  const row = db.prepare(`SELECT planned_recipes FROM households WHERE id = ?`).get(req.user.householdId);
+app.get('/api/households/:name/grocery-list', requireAuth, requireHouseholdView, (req, res) => {
+  const row = db.prepare(`SELECT planned_recipes FROM households WHERE id = ?`).get(req.viewHousehold.id);
   const plannedIds = JSON.parse(row.planned_recipes || '[]');
-  const pantrySet = new Set(pantryIngredientNames(db, req.user.householdId).map((p) => p.toLowerCase()));
+  const pantrySet = new Set(pantryIngredientNames(db, req.viewHousehold.id).map((p) => p.toLowerCase()));
 
   const recipeStmt = db.prepare(`SELECT id, name FROM recipes WHERE id = ?`);
   const ingredientsStmt = db.prepare(
@@ -735,9 +884,8 @@ function listPantry(householdId) {
     .all(householdId);
 }
 
-app.get('/api/households/:name/pantry', requireAuth, (req, res) => {
-  if (!sameHousehold(req, res)) return;
-  res.json(listPantry(req.user.householdId));
+app.get('/api/households/:name/pantry', requireAuth, requireHouseholdView, (req, res) => {
+  res.json(listPantry(req.viewHousehold.id));
 });
 
 // Add or restock an item. A restock with a price logs a 'purchased' usage
@@ -836,28 +984,25 @@ app.delete('/api/households/:name/pantry/:ingredient', requireAuth, (req, res) =
   res.json({ ok: true, pantry: listPantry(req.user.householdId) });
 });
 
-app.get('/api/households/:name/pantry/insights', requireAuth, (req, res) => {
-  if (!sameHousehold(req, res)) return;
-  res.json(pantryInsights(db, req.user.householdId));
+app.get('/api/households/:name/pantry/insights', requireAuth, requireHouseholdView, (req, res) => {
+  res.json(pantryInsights(db, req.viewHousehold.id));
 });
 
-app.get('/api/households/:name/pantry/restock-suggestions', requireAuth, (req, res) => {
-  if (!sameHousehold(req, res)) return;
-  res.json(restockSuggestions(db, req.user.householdId));
+app.get('/api/households/:name/pantry/restock-suggestions', requireAuth, requireHouseholdView, (req, res) => {
+  res.json(restockSuggestions(db, req.viewHousehold.id));
 });
 
 // --- Members -----------------------------------------------------------
 //
-// Everyone in a household can see who else is in it and what they cook --
-// that mutual visibility is the point of a shared household, unlike the
-// pantry/price data which stays scoped to the household as a whole.
+// Who's in a household and what they cook is visible the same way the
+// rest of a household's data is -- to any signed-in user, not just its
+// own members.
 
-app.get('/api/households/:name/members', requireAuth, (req, res) => {
-  if (!sameHousehold(req, res)) return;
+app.get('/api/households/:name/members', requireAuth, requireHouseholdView, (req, res) => {
   const members = db
     .prepare(`SELECT username FROM users WHERE household_id = ? ORDER BY username COLLATE NOCASE`)
-    .all(req.user.householdId);
-  const row = db.prepare(`SELECT cooked_log FROM households WHERE id = ?`).get(req.user.householdId);
+    .all(req.viewHousehold.id);
+  const row = db.prepare(`SELECT cooked_log FROM households WHERE id = ?`).get(req.viewHousehold.id);
   const cookedLog = JSON.parse(row.cooked_log || '[]');
   const recipeNameStmt = db.prepare(`SELECT name FROM recipes WHERE id = ?`);
 
@@ -888,6 +1033,18 @@ app.get('/api/health', (req, res) => {
   const recipeCount = db.prepare(`SELECT COUNT(*) AS n FROM recipes`).get().n;
   res.json({ ok: true, recipes: recipeCount });
 });
+
+// Expired sessions are only ever deleted lazily, when someone tries to
+// use that specific token (see getSessionUser) -- anyone who closes
+// their browser or clears cookies without logging out leaves a row
+// behind forever otherwise. A small personal app will never make this
+// urgent, but there's no reason to let it grow unbounded either.
+const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+function sweepExpiredSessions() {
+  db.prepare(`DELETE FROM sessions WHERE expires_at < datetime('now')`).run();
+}
+sweepExpiredSessions();
+setInterval(sweepExpiredSessions, SESSION_SWEEP_INTERVAL_MS).unref();
 
 app.listen(PORT, () => {
   console.log(`Foodie listening on http://localhost:${PORT}`);

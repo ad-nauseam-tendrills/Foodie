@@ -5,6 +5,7 @@ const state = {
   liked: [],
   disliked: [],
   planned: [], // recipe IDs currently in the meal plan
+  favorites: [], // recipe IDs saved by your own household
   pantry: [], // structured pantry items: { ingredient, quantity, unit, price, store, addedBy, ... }
 };
 
@@ -14,7 +15,10 @@ const el = {
   adminLink: document.getElementById('adminLink'),
   changePasswordLink: document.getElementById('changePasswordLink'),
   signOutBtn: document.getElementById('signOutBtn'),
+  signOutAllBtn: document.getElementById('signOutAllBtn'),
   signInLink: document.getElementById('signInLink'),
+  nameSearchInput: document.getElementById('nameSearchInput'),
+  favoritesOnlyToggle: document.getElementById('favoritesOnlyToggle'),
   likeInput: document.getElementById('likeInput'),
   likeTags: document.getElementById('likeTags'),
   likeSuggestions: document.getElementById('likeSuggestions'),
@@ -67,6 +71,17 @@ const el = {
   inviteLinkOutput: document.getElementById('inviteLinkOutput'),
   copyInviteLinkBtn: document.getElementById('copyInviteLinkBtn'),
   pendingInvitesList: document.getElementById('pendingInvitesList'),
+  browseHouseholdsPanel: document.getElementById('browseHouseholdsPanel'),
+  householdSelect: document.getElementById('householdSelect'),
+  loadHouseholdBtn: document.getElementById('loadHouseholdBtn'),
+  browseHouseholdResult: document.getElementById('browseHouseholdResult'),
+  browseHouseholdTitle: document.getElementById('browseHouseholdTitle'),
+  browseLiked: document.getElementById('browseLiked'),
+  browseDisliked: document.getElementById('browseDisliked'),
+  browsePlanned: document.getElementById('browsePlanned'),
+  browsePantryList: document.getElementById('browsePantryList'),
+  browsePantryEmpty: document.getElementById('browsePantryEmpty'),
+  browseMembersList: document.getElementById('browseMembersList'),
 };
 
 // ---------- Tag input helper --------------------------------------------
@@ -219,12 +234,14 @@ function renderAccountBar() {
     el.adminLink.hidden = !state.auth.isAdmin;
     el.changePasswordLink.hidden = false;
     el.signOutBtn.hidden = false;
+    el.signOutAllBtn.hidden = false;
     el.signInLink.hidden = true;
   } else {
     el.accountStatusText.textContent = 'Browsing without an account';
     el.adminLink.hidden = true;
     el.changePasswordLink.hidden = true;
     el.signOutBtn.hidden = true;
+    el.signOutAllBtn.hidden = true;
     el.signInLink.hidden = false;
   }
 }
@@ -235,9 +252,10 @@ async function onSignedIn(data) {
   el.pantryPanel.hidden = false;
   el.insightsPanel.hidden = false;
   el.membersPanel.hidden = false;
+  el.browseHouseholdsPanel.hidden = false;
 
   await loadHouseholdState();
-  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadMembers(), loadInvites()]);
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadMembers(), loadInvites(), loadHouseholdOptions()]);
   findDinner().catch(() => {});
 }
 
@@ -246,11 +264,13 @@ function onSignedOut() {
   state.liked = [];
   state.disliked = [];
   state.planned = [];
+  state.favorites = [];
   state.pantry = [];
   renderAccountBar();
   el.pantryPanel.hidden = true;
   el.insightsPanel.hidden = true;
   el.membersPanel.hidden = true;
+  el.browseHouseholdsPanel.hidden = true;
   el.groceryListWrap.hidden = true;
   renderTags(state.liked, el.likeTags, 'like', findDinner);
   renderTags(state.disliked, el.dislikeTags, 'dislike', findDinner);
@@ -264,11 +284,18 @@ async function signOut() {
   findDinner().catch(() => {});
 }
 
+async function signOutAll() {
+  await fetchJson('/api/auth/logout-all', { method: 'POST' }).catch(() => {});
+  onSignedOut();
+  findDinner().catch(() => {});
+}
+
 async function loadHouseholdState() {
   const data = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}`);
   state.liked = data.liked;
   state.disliked = data.disliked;
   state.planned = data.planned || [];
+  state.favorites = data.favorites || [];
   renderTags(state.liked, el.likeTags, 'like', findDinner);
   renderTags(state.disliked, el.dislikeTags, 'dislike', findDinner);
   renderSavedExclusionsLine();
@@ -313,18 +340,25 @@ async function findDinner() {
   const tag = el.quickToggle.checked ? 'Quick' : el.tagInput.value.trim();
   const tagParam = tag ? `&tag=${encodeURIComponent(tag)}` : '';
   const seasonalParam = el.seasonalToggle.checked ? `&seasonal=true` : '';
+  const nameQuery = el.nameSearchInput.value.trim();
+  const nameParam = nameQuery ? `&q=${encodeURIComponent(nameQuery)}` : '';
+  const favoritesOnlyParam = el.favoritesOnlyToggle.checked ? `&favoritesOnly=true` : '';
+  // Favorites/plan context is always your own household's, even while
+  // browsing another one read-only elsewhere on the page -- searching
+  // should never quietly start reflecting someone else's saved recipes.
+  const householdParam = state.auth ? `&household=${encodeURIComponent(state.auth.household)}` : '';
   el.results.innerHTML = '<p class="empty-state">Looking…</p>';
 
   const recipes = await fetchJson(
     `/api/recipes/match?have=${encodeURIComponent(have)}&exclude=${encodeURIComponent(exclude)}` +
-      `${categoryParam}${areaParam}${tagParam}${seasonalParam}`
+      `${categoryParam}${areaParam}${tagParam}${seasonalParam}${nameParam}${favoritesOnlyParam}${householdParam}`
   );
 
   el.resultsCount.textContent = recipes.length ? `${recipes.length} matches` : '';
   el.results.innerHTML = '';
 
   if (!recipes.length) {
-    el.results.innerHTML = '<p class="empty-state">No matches yet -- add a few more ingredients you like.</p>';
+    el.results.innerHTML = '<p class="empty-state">No matches yet -- try different ingredients or filters.</p>';
     return;
   }
 
@@ -386,10 +420,38 @@ function renderRecipeCard(recipe) {
     body.appendChild(note);
   }
 
-  body.appendChild(createAddToPlanButton(recipe.id));
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'card-actions-row';
+  if (state.auth) actionsRow.appendChild(createFavoriteButton(recipe.id, recipe.isFavorite));
+  actionsRow.appendChild(createAddToPlanButton(recipe.id));
+  body.appendChild(actionsRow);
 
   card.appendChild(body);
   return card;
+}
+
+function createFavoriteButton(recipeId, isFavorite) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'favorite-btn' + (isFavorite ? ' active' : '');
+  btn.textContent = isFavorite ? '★' : '☆';
+  btn.title = isFavorite ? 'Remove from favorites' : 'Save as favorite';
+  let active = isFavorite;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (active) {
+      await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/favorites/${recipeId}`, {
+        method: 'DELETE',
+      });
+    } else {
+      await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/favorites`, { recipeId });
+    }
+    active = !active;
+    btn.className = 'favorite-btn' + (active ? ' active' : '');
+    btn.textContent = active ? '★' : '☆';
+    btn.title = active ? 'Remove from favorites' : 'Save as favorite';
+  });
+  return btn;
 }
 
 async function openRecipeModal(id) {
@@ -937,6 +999,72 @@ async function copyInviteLink() {
   }, 1500);
 }
 
+// ---------- Browse other households (read-only) ---------------------------
+//
+// Any signed-in user can view any household's data -- this is separate
+// from the main search/plan/pantry panels above, which always stay bound
+// to your own household, so looking at someone else's never quietly
+// starts acting on their behalf.
+
+async function loadHouseholdOptions() {
+  const households = await fetchJson('/api/households');
+  el.householdSelect.innerHTML = '';
+  for (const h of households) {
+    const option = document.createElement('option');
+    option.value = h.name;
+    const isOwn = state.auth && h.name.toLowerCase() === state.auth.household.toLowerCase();
+    option.textContent = `${h.name} (${h.memberCount} member${h.memberCount === 1 ? '' : 's'})${isOwn ? ' -- you' : ''}`;
+    el.householdSelect.appendChild(option);
+  }
+}
+
+async function loadOtherHousehold() {
+  const name = el.householdSelect.value;
+  if (!name) return;
+  const [householdData, pantry, members] = await Promise.all([
+    fetchJson(`/api/households/${encodeURIComponent(name)}`),
+    fetchJson(`/api/households/${encodeURIComponent(name)}/pantry`),
+    fetchJson(`/api/households/${encodeURIComponent(name)}/members`),
+  ]);
+
+  el.browseHouseholdResult.hidden = false;
+  el.browseHouseholdTitle.textContent = name;
+  el.browseLiked.textContent = householdData.liked.length ? householdData.liked.join(', ') : 'nothing saved';
+  el.browseDisliked.textContent = householdData.disliked.length ? householdData.disliked.join(', ') : 'nothing saved';
+
+  if (householdData.planned.length) {
+    const recipeNames = await Promise.all(
+      householdData.planned.map((id) => fetchJson(`/api/recipes/${id}`).then((r) => r.name).catch(() => null))
+    );
+    el.browsePlanned.textContent = recipeNames.filter(Boolean).join(', ') || 'nothing planned';
+  } else {
+    el.browsePlanned.textContent = 'nothing planned';
+  }
+
+  el.browsePantryList.innerHTML = '';
+  el.browsePantryEmpty.hidden = pantry.length > 0;
+  for (const item of pantry) {
+    const li = document.createElement('li');
+    li.className = 'pantry-item';
+    const qtyLabel = item.quantity !== null ? `${item.quantity}${item.unit ? ' ' + item.unit : ''} ` : '';
+    const priceLabel = item.price !== null ? ` -- $${item.price.toFixed(2)}${item.store ? ` at ${item.store}` : ''}` : '';
+    li.textContent = `${qtyLabel}${item.ingredient}${priceLabel}`;
+    el.browsePantryList.appendChild(li);
+  }
+
+  el.browseMembersList.innerHTML = '';
+  for (const m of members) {
+    const li = document.createElement('li');
+    li.className = 'member-item';
+    li.innerHTML = `<strong>${m.username}</strong>`;
+    const detail = document.createElement('div');
+    detail.className = 'member-detail';
+    detail.textContent = m.cookCount ? `cooked ${m.cookCount}x -- favorites: ${m.topRecipes.map((r) => r.name).join(', ')}` : 'nothing logged yet';
+    li.appendChild(detail);
+    el.browseMembersList.appendChild(li);
+  }
+}
+
 // ---------- Wire up --------------------------------------------------------
 
 wireTagInput({
@@ -960,8 +1088,14 @@ wireTagInput({
 wireIngredientAutocomplete(el.pantryIngredient, el.pantrySuggestions);
 
 el.signOutBtn.addEventListener('click', signOut);
+el.signOutAllBtn.addEventListener('click', signOutAll);
 el.generateInviteBtn.addEventListener('click', generateInvite);
 el.copyInviteLinkBtn.addEventListener('click', copyInviteLink);
+el.loadHouseholdBtn.addEventListener('click', () => loadOtherHousehold().catch(() => {}));
+// The list is only fetched once at sign-in, so without this a household
+// created by someone else *after* your page loaded (like a sibling
+// signing up mid-session) would never show up here until a full reload.
+el.householdSelect.addEventListener('focus', () => loadHouseholdOptions().catch(() => {}));
 
 el.saveBtn.addEventListener('click', savePreferences);
 el.matchBtn.addEventListener('click', findDinner);
@@ -995,6 +1129,12 @@ let tagDebounce;
 el.tagInput.addEventListener('input', () => {
   clearTimeout(tagDebounce);
   tagDebounce = setTimeout(findDinner, 300);
+});
+el.favoritesOnlyToggle.addEventListener('change', findDinner);
+let nameSearchDebounce;
+el.nameSearchInput.addEventListener('input', () => {
+  clearTimeout(nameSearchDebounce);
+  nameSearchDebounce = setTimeout(findDinner, 300);
 });
 
 (async function init() {

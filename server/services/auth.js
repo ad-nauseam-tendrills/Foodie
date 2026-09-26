@@ -47,6 +47,12 @@ const BANNED_WORDS = [
   'foodie',
 ];
 
+// Word-boundary, not substring -- otherwise legitimate long passwords
+// like "myAdministrativeAssistant2026" or "passwordlessFutureIsHere"
+// get rejected just for containing "admin"/"password" as a sub-string of
+// a longer, unrelated word.
+const BANNED_WORD_PATTERNS = BANNED_WORDS.map((word) => ({ word, re: new RegExp(`\\b${word}\\b`, 'i') }));
+
 /**
  * @param {string} password
  * @param {{ username?: string, household?: string }} [context] -- also
@@ -72,8 +78,8 @@ function validatePassword(password, context = {}) {
   }
 
   const lower = password.toLowerCase();
-  for (const word of BANNED_WORDS) {
-    if (lower.includes(word)) {
+  for (const { word, re } of BANNED_WORD_PATTERNS) {
+    if (re.test(password)) {
       return `Password cannot contain the word "${word}" -- it's too common/guessable`;
     }
   }

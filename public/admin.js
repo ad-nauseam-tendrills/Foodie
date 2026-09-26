@@ -67,6 +67,25 @@ async function loadUsers() {
     if (u.mustChangePassword) badges.innerHTML += `<span class="admin-badge must-change">must change password</span>`;
     li.appendChild(badges);
 
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.textContent = 'reset password';
+    resetBtn.addEventListener('click', async () => {
+      const password = prompt(
+        `New temporary password for ${u.username} @ ${u.household}\n` +
+          `(at least 14 characters, avoid common words/patterns -- they'll be forced to change it on next login)`
+      );
+      if (password === null) return;
+      try {
+        await postJson(`/api/admin/users/${u.id}/reset-password`, { password });
+        showSuccess(`Password reset for ${u.username} @ ${u.household} -- give it to them directly.`);
+        await loadUsers();
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+    li.appendChild(resetBtn);
+
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.textContent = 'delete';

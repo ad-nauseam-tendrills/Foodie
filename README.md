@@ -218,6 +218,16 @@ docker compose -f docker-compose.staging.yml down
   nudges the ranking toward in-season ingredients always, and the "only
   what's in season" toggle filters to just those. Edit that file directly
   if you're elsewhere or want a different region's calendar.
+- **Search by name** (`q` on `/api/recipes/match`) is a plain
+  case-insensitive substring match on the recipe name -- separate from
+  the ingredient-overlap scoring, and the only filter that also changes
+  the sort order (alphabetical, since ingredient match-percent is
+  meaningless when you didn't specify any ingredients).
+- **Favorites** (★ on any recipe card) are a saved-recipes list per
+  household, distinct from the meal plan (temporary, clears off the
+  grocery list once used) and cooked history (a log of the past) -- just
+  "keep this one around," same as Paprika/Mealime/Whisk's version of the
+  feature. "Favorites only" filters search to just those.
 
 Saved exclusions (the "always avoid" list) are permanent once you save
 them while signed in -- that's what `PUT .../preferences` below does.
@@ -250,9 +260,20 @@ special characters do). Rejected: the whole password as one repeated
 chunk (`abcabcabc`), five or more of the same character in a row, common
 words like "password"/"admin"/"qwerty"/"welcome" (see
 `BANNED_WORDS` in `server/services/auth.js`), and the account's own
-username or household name. Applied identically everywhere a password
-is set -- signup, accept-invite, change-password, and admin-created
-accounts.
+username or household name. The word check is whole-word, not substring
+-- "myAdministrativeAssistant2026" is fine even though it contains
+"admin", since it isn't *just* "admin" with padding. Applied identically
+everywhere a password is set -- signup, accept-invite, change-password,
+admin-created accounts, and admin password resets.
+
+Any signed-in user can change their own password any time from the
+account bar, and (new accounts aside) can sign out of every session at
+once (`POST /api/auth/logout-all`) -- not just the current browser --
+for a lost/stolen device or "I left myself logged in somewhere." Login,
+signup, and accept-invite are all rate-limited per IP (8 attempts / 10
+min, in-memory, resets on restart); expired sessions are swept from the
+database hourly rather than only being cleaned up lazily when someone
+tries to use one.
 
 **The first-ever boot creates an admin account.** There's no email flow
 to send setup instructions through, so on first startup (when no
@@ -274,7 +295,11 @@ existing or new -- with a temporary password they set themselves, no
 invite link needed. Those accounts are also forced to change their
 password on first login. This is the direct alternative to the
 invite-link flow: useful when you'd rather hand someone a password
-yourself than send them a link.
+yourself than send them a link. An admin can also **reset an existing
+user's password** the same way -- there's no self-service "forgot
+password" (no email to send a reset link through), so this is the
+fallback when someone's locked out. A reset invalidates every existing
+session for that account, same as a stolen-password precaution.
 
 **Joining a household is invite-only** the other way (non-admin). Signing up (`POST
 /api/auth/signup`) only ever creates a brand-new household -- if the
@@ -296,6 +321,22 @@ Household members can see each other on the **Household members**
 panel -- cook count and top recipes per person -- by design: the point
 of a shared household is that visibility, not privacy between its own
 members.
+
+**Cross-household visibility is also a deliberate feature, not a bug.**
+Any signed-in user (not just a household's own members) can read any
+other household's full data, read-only: liked/disliked ingredients,
+meal plan, cooked history, members, and pantry -- including quantities
+and prices paid. The **Browse other households** panel is the UI for
+this; the underlying `GET` routes work for any signed-in user regardless
+of household. It's deliberately kept separate from your own
+search/plan/pantry panels above (which always stay bound to your own
+household) rather than repurposing them, so looking at someone else's
+data never quietly starts acting on their behalf. Two things stay
+restricted to a household's own members even under this model: every
+*write* (`PUT`/`POST`/`PATCH`/`DELETE` on preferences, cooked, plan,
+pantry, favorites), and reading **invites** -- an invite token is a
+credential that lets someone join a household, not data to browse, so
+`GET .../invites` still 403s for a non-member.
 
 ## Meal planning + grocery list
 
@@ -369,11 +410,12 @@ another one.
 | `GET /api/areas` | Distinct cuisines/regions |
 | `GET /api/tags` | Distinct recipe tags |
 | `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) |
-| `GET /api/recipes/match?have=a,b&exclude=c&category=&area=&tag=&seasonal=true` | Ranked recipe matches (works signed out; de-emphasizes your own household's recently-cooked recipes if signed in) |
+| `GET /api/recipes/match?have=a,b&exclude=c&category=&area=&tag=&seasonal=true&q=&favoritesOnly=true&household=` | Ranked recipe matches (works signed out). `q` searches by name; `household` scopes favorites/`isFavorite` to that household (always your own, even while browsing another read-only); de-emphasizes your own household's recently-cooked recipes if signed in |
 | `GET /api/recipes/:id` | Full recipe detail |
 | `POST /api/auth/signup` | Create a *new* household + its first account (`{household, username, password}`) -- 409s if that household already exists |
 | `POST /api/auth/login` | Sign in, sets the session cookie |
-| `POST /api/auth/logout` | Sign out |
+| `POST /api/auth/logout` | Sign out (current session only) |
+| `POST /api/auth/logout-all` | Sign out of every session for this account, everywhere |
 | `GET /api/auth/me` | Current session's username/household/isAdmin/mustChangePassword, or 401 |
 | `POST /api/auth/change-password` | `{currentPassword, newPassword}` -- works even when must-change-password is set (that's the only thing such an account can do) |
 | `GET /api/invites/:token` | Public: which household an invite link leads to, or 404/410 if invalid/expired/used |
@@ -381,22 +423,27 @@ another one.
 | `GET /api/households/:name/invites` | List this household's invites (pending/used/expired) with their links |
 | `POST /api/households/:name/invites` | Generate an invite link (`{note?}`, optional label) -- 7-day expiry, not emailed |
 | `DELETE /api/households/:name/invites/:id` | Revoke an invite |
-| `GET /api/households/:name` | Household state: liked/disliked/cooked log/plan (requires being signed into that household) |
-| `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (permanent exclusions) |
-| `POST /api/households/:name/cooked` | Log a recipe as cooked -- de-dupes future suggestions, decrements matching pantry quantities |
-| `POST /api/households/:name/plan` | Add a recipe to the meal plan |
-| `DELETE /api/households/:name/plan/:recipeId` | Remove a recipe from the meal plan |
-| `GET /api/households/:name/grocery-list` | Sectioned, pantry-filtered ingredient list for the current plan |
-| `GET /api/households/:name/pantry` | List pantry items (ingredient, quantity, unit, price, store, who added it) |
-| `POST /api/households/:name/pantry` | Add/restock a pantry item; a price logs a purchase event |
-| `PATCH /api/households/:name/pantry/:ingredient` | Set an exact quantity, or `{action: "used_up"\|"wasted"}` |
-| `DELETE /api/households/:name/pantry/:ingredient` | Remove a pantry item (no usage event -- "added by mistake") |
-| `GET /api/households/:name/pantry/insights` | `{canMakeNow, unlockSuggestions}` computed from the current pantry |
-| `GET /api/households/:name/pantry/restock-suggestions` | Frequently-used ingredients you're currently out of, with your own price history |
-| `GET /api/households/:name/members` | Household members with cook count + top recipes |
+| `GET /api/households` | List all households + member counts -- any signed-in user, powers the household browser |
+| `GET /api/households/:name` | Household state: liked/disliked/cooked log/plan/favorites -- readable by any signed-in user, not just members |
+| `PUT /api/households/:name/preferences` | Save liked/disliked ingredients (own household only) |
+| `POST /api/households/:name/cooked` | Log a recipe as cooked -- de-dupes future suggestions, decrements matching pantry quantities (own household only) |
+| `POST /api/households/:name/plan` | Add a recipe to the meal plan (own household only) |
+| `DELETE /api/households/:name/plan/:recipeId` | Remove a recipe from the meal plan (own household only) |
+| `POST /api/households/:name/favorites` | Save a recipe as a favorite (own household only) |
+| `DELETE /api/households/:name/favorites/:recipeId` | Remove a favorite (own household only) |
+| `GET /api/households/:name/grocery-list` | Sectioned, pantry-filtered ingredient list for the current plan -- readable by any signed-in user |
+| `GET /api/households/:name/pantry` | List pantry items (ingredient, quantity, unit, price, store, who added it) -- readable by any signed-in user |
+| `POST /api/households/:name/pantry` | Add/restock a pantry item; a price logs a purchase event (own household only) |
+| `PATCH /api/households/:name/pantry/:ingredient` | Set an exact quantity, or `{action: "used_up"\|"wasted"}` (own household only) |
+| `DELETE /api/households/:name/pantry/:ingredient` | Remove a pantry item -- no usage event, "added by mistake" (own household only) |
+| `GET /api/households/:name/pantry/insights` | `{canMakeNow, unlockSuggestions}` computed from the pantry -- readable by any signed-in user |
+| `GET /api/households/:name/pantry/restock-suggestions` | Frequently-used ingredients they're out of, with their own price history -- readable by any signed-in user |
+| `GET /api/households/:name/members` | Members with cook count + top recipes -- readable by any signed-in user |
+| `GET /api/households/:name/invites` | List invites (own household only -- a token is a credential, not browsable data) |
 | `GET /api/admin/households` | Admin only: all households with member counts |
 | `GET /api/admin/users` | Admin only: all users across every household |
 | `POST /api/admin/users` | Admin only: create a user directly (`{household, username, password, isAdmin?}`) -- always must-change-password |
+| `POST /api/admin/users/:id/reset-password` | Admin only: set a new temporary password for an existing user (`{password}`) -- forces must-change-password, kills their existing sessions |
 | `DELETE /api/admin/users/:id` | Admin only: delete a user (not yourself) |
 
 ## Roadmap / ideas not built yet

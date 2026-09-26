@@ -137,6 +137,7 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_users_household ON users(household_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
   CREATE INDEX IF NOT EXISTS idx_pantry_items_household ON pantry_items(household_id);
   CREATE INDEX IF NOT EXISTS idx_usage_events_household ON usage_events(household_id);
   CREATE INDEX IF NOT EXISTS idx_usage_events_ingredient ON usage_events(household_id, ingredient_id);
@@ -160,6 +161,7 @@ addColumnIfMissing('households', 'planned_recipes', `TEXT NOT NULL DEFAULT '[]'`
 addColumnIfMissing('households', 'pantry_ingredients', `TEXT NOT NULL DEFAULT '[]'`);
 addColumnIfMissing('users', 'is_admin', `INTEGER NOT NULL DEFAULT 0`);
 addColumnIfMissing('users', 'must_change_password', `INTEGER NOT NULL DEFAULT 0`);
+addColumnIfMissing('households', 'favorite_recipes', `TEXT NOT NULL DEFAULT '[]'`);
 
 // Merges ingredient rows that are really the same thing under different
 // spellings (see server/data/ingredient-aliases.js), for databases that

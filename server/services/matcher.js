@@ -33,7 +33,8 @@ function parseTags(tagsField) {
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {{
  *   have?: string[], exclude?: string[], recentRecipeIds?: Set<number>, limit?: number,
- *   category?: string, tag?: string, area?: string,
+ *   category?: string, tag?: string, area?: string, nameQuery?: string,
+ *   favoriteIds?: Set<number>, favoriteOnly?: boolean,
  *   seasonalKeywords?: string[], seasonalOnly?: boolean,
  * }} opts
  */
@@ -41,10 +42,13 @@ function matchRecipes(db, opts = {}) {
   const haveSet = (opts.have || []).map(normalize).filter(Boolean);
   const excludeSet = (opts.exclude || []).map(normalize).filter(Boolean);
   const recentRecipeIds = opts.recentRecipeIds || new Set();
+  const favoriteIds = opts.favoriteIds || new Set();
+  const favoriteOnly = !!opts.favoriteOnly;
   const limit = opts.limit || 30;
   const category = opts.category ? normalize(opts.category) : null;
   const tag = opts.tag ? normalize(opts.tag) : null;
   const area = opts.area ? normalize(opts.area) : null;
+  const nameQuery = opts.nameQuery ? normalize(opts.nameQuery) : null;
   const seasonalKeywords = opts.seasonalKeywords || null;
   const seasonalOnly = !!opts.seasonalOnly;
 
@@ -60,6 +64,8 @@ function matchRecipes(db, opts = {}) {
   for (const recipe of recipes) {
     if (category && normalize(recipe.category) !== category) continue;
     if (area && normalize(recipe.area) !== area) continue;
+    if (nameQuery && !normalize(recipe.name).includes(nameQuery)) continue;
+    if (favoriteOnly && !favoriteIds.has(recipe.id)) continue;
 
     const recipeTags = parseTags(recipe.tags);
     if (tag && !recipeTags.some((t) => normalize(t).includes(tag))) continue;
@@ -111,10 +117,16 @@ function matchRecipes(db, opts = {}) {
       missingIngredients: missing.map((m) => m.name),
       recentlyCooked: recentRecipeIds.has(recipe.id),
       seasonalIngredients,
+      isFavorite: favoriteIds.has(recipe.id),
     });
   }
 
   results.sort((a, b) => {
+    // Searching by name with no ingredients specified isn't a ranking
+    // problem -- matchPct is 0 for everything, so the usual comparator
+    // would fall through to a fairly meaningless tiebreak. Alphabetical
+    // is what anyone typing a name into a search box expects.
+    if (nameQuery && haveSet.length === 0) return a.name.localeCompare(b.name);
     // Nudge recently-cooked meals down so the list doesn't repeat itself.
     if (a.recentlyCooked !== b.recentlyCooked) return a.recentlyCooked ? 1 : -1;
     // Actual ingredient match always outranks seasonality -- a recipe

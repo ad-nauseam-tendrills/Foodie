@@ -14,6 +14,7 @@
       <a id="adminLink" href="/admin.html" class="link-btn" hidden>Admin</a>
       <a id="changePasswordLink" href="/?changePassword=1" class="link-btn" hidden>Change password</a>
       <button id="signOutBtn" class="secondary" hidden>Sign out</button>
+      <button id="signOutAllBtn" class="secondary" hidden title="Sign out of every device/session, not just this one">Sign out everywhere</button>
       <a id="signInLink" href="/" class="link-btn" hidden>Sign in</a>
     </div>
   </header>
@@ -46,6 +47,11 @@
       <h2>Narrow it down</h2>
       <div class="filters-row">
         <div class="filter-field">
+          <label for="nameSearchInput">Search by name</label>
+          <input id="nameSearchInput" type="text" placeholder="e.g. chicken soup" autocomplete="off" />
+        </div>
+
+        <div class="filter-field">
           <label for="categorySelect">Category</label>
           <select id="categorySelect">
             <option value="">Any</option>
@@ -69,6 +75,13 @@
           <label class="checkbox-label">
             <input id="quickToggle" type="checkbox" />
             <span>⚡ Quick &amp; easy only</span>
+          </label>
+        </div>
+
+        <div class="filter-field filter-field-checkbox">
+          <label class="checkbox-label">
+            <input id="favoritesOnlyToggle" type="checkbox" />
+            <span>★ Favorites only</span>
           </label>
         </div>
 
@@ -153,6 +166,26 @@
         <button id="copyInviteLinkBtn" type="button">Copy</button>
       </div>
       <ul id="pendingInvitesList" class="pending-invites-list"></ul>
+    </section>
+
+    <section class="panel" id="browseHouseholdsPanel" hidden>
+      <h2>Browse other households</h2>
+      <p class="muted">Every signed-in user can see any household's data, read-only -- liked/disliked ingredients, meal plan, pantry (including prices), and members.</p>
+      <div class="household-switcher">
+        <select id="householdSelect"></select>
+        <button id="loadHouseholdBtn" class="secondary" type="button">View</button>
+      </div>
+      <div id="browseHouseholdResult" class="browse-household-result" hidden>
+        <h3 id="browseHouseholdTitle"></h3>
+        <p><strong>Likes:</strong> <span id="browseLiked" class="muted"></span></p>
+        <p><strong>Avoids:</strong> <span id="browseDisliked" class="muted"></span></p>
+        <p><strong>Meal plan:</strong> <span id="browsePlanned" class="muted"></span></p>
+        <h4>Pantry</h4>
+        <ul id="browsePantryList" class="pantry-inventory-list"></ul>
+        <p id="browsePantryEmpty" class="empty-state">Nothing in their pantry.</p>
+        <h4>Members</h4>
+        <ul id="browseMembersList" class="members-list"></ul>
+      </div>
     </section>
   </main>
 

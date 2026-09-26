@@ -743,3 +743,44 @@ footer a { color: var(--accent); }
 }
 
 .admin-list-item button:hover { border-color: var(--bad); color: var(--bad); }
+
+/* ---------- Browse other households ---------- */
+
+.household-switcher {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.household-switcher select {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  flex: 1;
+  max-width: 260px;
+}
+
+.browse-household-result h3 { margin-bottom: 0.25rem; }
+.browse-household-result h4 { margin: 1rem 0 0.4rem; font-size: 0.9rem; }
+
+.favorite-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.favorite-btn.active { border-color: var(--accent); color: var(--accent); }
+.favorite-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.card-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
