@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foodie — admin</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🍽️ Foodie admin</h1>
+    <div class="account-bar">
+      <span id="accountStatusText" class="household-status"></span>
+      <a href="/app.html" class="link-btn">Back to app</a>
+      <button id="signOutBtn" class="secondary">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Create an account</h2>
+      <p class="muted">
+        Sets a temporary password directly -- no invite link, no email. The person is forced to
+        change it the first time they sign in.
+      </p>
+      <form id="createUserForm" class="stacked-form">
+        <label for="newUserHousehold">Household</label>
+        <input id="newUserHousehold" type="text" list="householdOptions" autocomplete="off" placeholder="existing name, or a new one" />
+        <datalist id="householdOptions"></datalist>
+
+        <label for="newUserUsername">Username</label>
+        <input id="newUserUsername" type="text" autocomplete="off" />
+
+        <label for="newUserPassword">Temporary password</label>
+        <input id="newUserPassword" type="text" autocomplete="off" />
+        <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
+
+        <label class="checkbox-label"><input id="newUserIsAdmin" type="checkbox" /> Also make this an admin</label>
+
+        <button id="createUserBtn" type="submit" class="primary">Create account</button>
+      </form>
+      <p id="adminError" class="form-error" hidden></p>
+      <p id="adminSuccess" class="form-success" hidden></p>
+    </section>
+
+    <section class="panel">
+      <h2>Households</h2>
+      <ul id="householdsList" class="admin-list"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Users</h2>
+      <ul id="usersList" class="admin-list"></ul>
+    </section>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

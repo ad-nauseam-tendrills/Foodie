@@ -1,0 +1,9 @@
+node_modules/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data-staging/*.db
+data-staging/*.db-shm
+data-staging/*.db-wal
+.env
+*.log

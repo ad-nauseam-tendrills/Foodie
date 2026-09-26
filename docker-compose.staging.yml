@@ -1,0 +1,18 @@
+services:
+  foodie-staging:
+    build: .
+    container_name: foodie-staging
+    restart: unless-stopped
+    ports:
+      # Different host port than production (3001) and loopback-only,
+      # same as every other container on this host -- nginx is what
+      # actually faces the internet.
+      - "127.0.0.1:3002:3000"
+    volumes:
+      # Its own data directory -- staging gets its own database, never
+      # touches production's data/. This matters a lot for this release:
+      # it drops the old passwordless household model, so you want to
+      # create test accounts and poke at it before that hits real data.
+      - ./data-staging:/app/data
+    environment:
+      - PORT=3000

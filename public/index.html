@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foodie — sign in</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="landing-body">
+  <main class="landing-main">
+    <div class="landing-card">
+      <h1>🍽️ Foodie</h1>
+      <p class="landing-tagline">Self-hosted, ad-free "what's for dinner?"</p>
+
+      <form id="authForm" class="stacked-form" hidden>
+        <label for="authHousehold">Household</label>
+        <input id="authHousehold" type="text" autocomplete="organization" />
+        <label for="authUsername">Username</label>
+        <input id="authUsername" type="text" autocomplete="username" />
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" autocomplete="current-password" />
+        <p id="authHint" class="form-hint" hidden>Creates a brand-new household. To join an existing one, ask a member for an invite link.</p>
+        <button id="authSubmitBtn" type="submit" class="primary full-width">Sign in</button>
+        <button id="authToggleModeBtn" type="button" class="link-btn">Starting a new household? Create one</button>
+      </form>
+
+      <form id="inviteAcceptForm" class="stacked-form" hidden>
+        <p id="inviteHouseholdLabel" class="form-hint"></p>
+        <label for="inviteUsername">Username</label>
+        <input id="inviteUsername" type="text" autocomplete="username" />
+        <label for="invitePassword">Password</label>
+        <input id="invitePassword" type="password" autocomplete="new-password" />
+        <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
+        <button id="inviteAcceptBtn" type="submit" class="primary full-width">Join household</button>
+        <button id="inviteCancelBtn" type="button" class="link-btn">Not you? Use a different account</button>
+      </form>
+
+      <form id="changePasswordForm" class="stacked-form" hidden>
+        <p id="changePasswordIntro" class="form-hint"></p>
+        <label for="currentPasswordInput">Current password</label>
+        <input id="currentPasswordInput" type="password" autocomplete="current-password" />
+        <label for="newPasswordInput">New password</label>
+        <input id="newPasswordInput" type="password" autocomplete="new-password" />
+        <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
+        <button id="changePasswordBtn" type="submit" class="primary full-width">Set new password</button>
+        <button id="changePasswordCancelBtn" type="button" class="link-btn" hidden>Cancel</button>
+      </form>
+
+      <p id="authError" class="form-error" hidden></p>
+      <p id="authSuccess" class="form-success" hidden></p>
+
+      <a id="browseLink" href="/app.html" class="link-btn browse-link">Browse recipes without an account</a>
+    </div>
+  </main>
+  <script src="/login.js"></script>
+</body>
+</html>
