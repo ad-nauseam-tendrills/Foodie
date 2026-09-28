@@ -41,7 +41,25 @@ async function loadHouseholds() {
   for (const h of households) {
     const li = document.createElement('li');
     li.className = 'admin-list-item';
-    li.innerHTML = `<span><strong>${escapeHtml(h.name)}</strong> -- ${h.memberCount} member${h.memberCount === 1 ? '' : 's'}</span>`;
+
+    const text = document.createElement('span');
+    text.innerHTML = `<strong>${escapeHtml(h.name)}</strong> -- ${h.memberCount} member${h.memberCount === 1 ? '' : 's'}`;
+    li.appendChild(text);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = 'delete';
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete household "${h.name}"${h.memberCount ? ` and its ${h.memberCount} member${h.memberCount === 1 ? '' : 's'}` : ''}? This can't be undone.`)) return;
+      try {
+        await fetchJson(`/api/admin/households/${encodeURIComponent(h.name)}`, { method: 'DELETE' });
+        await Promise.all([loadHouseholds(), loadUsers()]);
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+    li.appendChild(deleteBtn);
+
     el.householdsList.appendChild(li);
 
     const option = document.createElement('option');

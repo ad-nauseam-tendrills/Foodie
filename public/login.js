@@ -5,9 +5,7 @@ const el = {
   authHousehold: document.getElementById('authHousehold'),
   authUsername: document.getElementById('authUsername'),
   authPassword: document.getElementById('authPassword'),
-  authHint: document.getElementById('authHint'),
   authSubmitBtn: document.getElementById('authSubmitBtn'),
-  authToggleModeBtn: document.getElementById('authToggleModeBtn'),
   inviteAcceptForm: document.getElementById('inviteAcceptForm'),
   inviteHouseholdLabel: document.getElementById('inviteHouseholdLabel'),
   inviteUsername: document.getElementById('inviteUsername'),
@@ -22,10 +20,8 @@ const el = {
   changePasswordCancelBtn: document.getElementById('changePasswordCancelBtn'),
   authError: document.getElementById('authError'),
   authSuccess: document.getElementById('authSuccess'),
-  browseLink: document.getElementById('browseLink'),
 };
 
-let authMode = 'login'; // 'login' | 'signup'
 let inviteToken = null;
 let changePasswordForced = false;
 
@@ -70,21 +66,15 @@ function goToApp() {
   window.location.href = '/app.html';
 }
 
-// ---------- Sign in / create household ----------------------------------
-
-function setAuthMode(mode) {
-  authMode = mode;
-  el.authSubmitBtn.textContent = mode === 'signup' ? 'Create a new household' : 'Sign in';
-  el.authToggleModeBtn.textContent =
-    mode === 'signup' ? 'Already have an account? Sign in' : 'Starting a new household? Create one';
-  el.authPassword.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
-  el.authHint.hidden = mode !== 'signup';
-}
+// ---------- Sign in ----------------------------------------------------
+//
+// Self-signup is gone (see server/index.js) -- an account only exists if
+// an admin created one or a member invited you, so this form only ever
+// signs in.
 
 function showAuthForm() {
   hideAllForms();
   el.authForm.hidden = false;
-  setAuthMode('login');
 }
 
 async function submitAuth(e) {
@@ -98,8 +88,7 @@ async function submitAuth(e) {
     return;
   }
   try {
-    const endpoint = authMode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
-    const data = await postJson(endpoint, { household, username, password });
+    const data = await postJson('/api/auth/login', { household, username, password });
     if (data.mustChangePassword) {
       showChangePasswordForm({ forced: true, currentPassword: password });
     } else {
@@ -196,7 +185,6 @@ async function submitChangePassword(e) {
 // ---------- Wire up + init --------------------------------------------------
 
 el.authForm.addEventListener('submit', submitAuth);
-el.authToggleModeBtn.addEventListener('click', () => setAuthMode(authMode === 'signup' ? 'login' : 'signup'));
 el.inviteAcceptForm.addEventListener('submit', submitAcceptInvite);
 el.inviteCancelBtn.addEventListener('click', cancelInviteAccept);
 el.changePasswordForm.addEventListener('submit', submitChangePassword);

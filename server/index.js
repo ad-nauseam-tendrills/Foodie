@@ -159,61 +159,23 @@ function authResponseBody(user, extra) {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{2,30}$/;
+// Letters (incl. accented/non-Latin), digits, spaces, and a small set of
+// punctuation real household names actually use ("Bustos East", "The
+// O'Briens", "Smith-Jones") -- notably excludes `<`, `>`, `/`, `"`, `` ` ``,
+// which is what let `<img src=x onerror=alert(1)>` through as a household
+// name before this existed. Enforced at creation time rather than relying
+// only on output-side escaping (which is also in place, but two layers
+// beat one).
+const HOUSEHOLD_NAME_RE = /^[\p{L}\p{N} ,'.-]{1,60}$/u;
 
-// Creates a brand-new household only -- joining an existing one requires
-// an invite (below). Without this, anyone who knew (or guessed) a
-// household's name could just sign themselves into it.
+// Public self-signup is disabled -- it was being used to spray junk/probe
+// households (including an XSS payload as a household name) at the live
+// site. The only ways to get an account now are an admin creating one
+// directly (POST /api/admin/users) or an invite from an existing member
+// (POST /api/auth/accept-invite). Full history of the old open-signup
+// implementation is in git if this ever needs to be self-serve again.
 app.post('/api/auth/signup', (req, res) => {
-  // Not brute-forcing a login here (there's nothing to guess into yet),
-  // but with no rate limit at all this endpoint is a free way to spam
-  // the household/user tables and burn scrypt CPU time -- worth the same
-  // per-IP throttle as login.
-  const rateLimitKey = `signup:${req.ip}`;
-  if (isLoginRateLimited(rateLimitKey)) {
-    return res.status(429).json({ error: 'Too many attempts -- wait a few minutes and try again' });
-  }
-
-  const householdName = String((req.body && req.body.household) || '').trim();
-  const username = String((req.body && req.body.username) || '').trim();
-  const password = String((req.body && req.body.password) || '');
-
-  if (!householdName) {
-    recordLoginAttempt(rateLimitKey, false);
-    return res.status(400).json({ error: 'Household name is required' });
-  }
-  if (!USERNAME_RE.test(username)) {
-    recordLoginAttempt(rateLimitKey, false);
-    return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
-  }
-  const passwordError = validatePassword(password, { username, household: householdName });
-  if (passwordError) {
-    recordLoginAttempt(rateLimitKey, false);
-    return res.status(400).json({ error: passwordError });
-  }
-
-  const existingHousehold = db.prepare(`SELECT 1 FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
-  if (existingHousehold) {
-    recordLoginAttempt(rateLimitKey, false);
-    return res.status(409).json({ error: 'That household already exists -- ask a member for an invite link' });
-  }
-  recordLoginAttempt(rateLimitKey, true);
-
-  db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
-  const household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
-
-  const { salt, hash } = hashPassword(password);
-  const result = db
-    .prepare(`INSERT INTO users (household_id, username, password_hash, password_salt) VALUES (?, ?, ?, ?)`)
-    .run(household.id, username, hash, salt);
-
-  const token = createToken();
-  db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`).run(
-    token,
-    result.lastInsertRowid,
-    tokenExpiryIso()
-  );
-  setSessionCookie(req, res, token);
-  res.json(authResponseBody({ username, householdName: household.name, isAdmin: false, mustChangePassword: false }));
+  res.status(403).json({ error: 'Self-signup is disabled. Ask an admin for an account, or a member for an invite link.' });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -451,6 +413,20 @@ app.get('/api/admin/households', requireAdmin, (req, res) => {
   res.json(rows);
 });
 
+// Deleting a household cascades to its users, pantry, invites, and usage
+// events (all FKs to households(id) are ON DELETE CASCADE) -- for
+// cleaning up junk/probe households (self-signup made this easy to end
+// up with before it was disabled) or a household nobody uses anymore.
+app.delete('/api/admin/households/:name', requireAdmin, (req, res) => {
+  const household = db.prepare(`SELECT * FROM households WHERE name = ? COLLATE NOCASE`).get(req.params.name);
+  if (!household) return res.status(404).json({ error: 'Household not found' });
+  if (household.id === req.user.householdId) {
+    return res.status(400).json({ error: "Can't delete your own household -- it would also delete your account" });
+  }
+  db.prepare(`DELETE FROM households WHERE id = ?`).run(household.id);
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/users', requireAdmin, (req, res) => {
   const rows = db
     .prepare(
@@ -473,7 +449,11 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
   const password = String((req.body && req.body.password) || '');
   const makeAdmin = !!(req.body && req.body.isAdmin);
 
-  if (!householdName) return res.status(400).json({ error: 'Household name is required' });
+  if (!HOUSEHOLD_NAME_RE.test(householdName)) {
+    return res
+      .status(400)
+      .json({ error: "Household name must be 1-60 characters: letters, numbers, spaces, and , ' . -" });
+  }
   if (!USERNAME_RE.test(username)) {
     return res.status(400).json({ error: 'Username must be 2-30 letters, numbers, _ or -' });
   }
@@ -533,8 +513,12 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
 });
 
 // --- Ingredients (autocomplete) ---------------------------------------
+//
+// Everything below in this section used to work signed-out (a deliberate
+// "browse without an account" mode). That's gone now -- the whole app
+// requires a session, full stop -- so these all pick up requireAuth too.
 
-app.get('/api/ingredients', (req, res) => {
+app.get('/api/ingredients', requireAuth, (req, res) => {
   const q = String(req.query.q || '').trim();
   const rows = q
     ? db.prepare(`SELECT name FROM ingredients WHERE name LIKE ? ORDER BY name LIMIT 25`).all(`%${q}%`)
@@ -546,7 +530,7 @@ app.get('/api/ingredients', (req, res) => {
 
 // Categories are TheMealDB's broad groupings (Chicken, Seafood, Dessert,
 // Vegetarian, ...) -- this is what separates "dessert" from "dinner".
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', requireAuth, (req, res) => {
   const rows = db
     .prepare(`SELECT DISTINCT category FROM recipes WHERE category IS NOT NULL AND category != '' ORDER BY category`)
     .all();
@@ -554,7 +538,7 @@ app.get('/api/categories', (req, res) => {
 });
 
 // Areas are cuisine/region (American, Chilean, German, Italian, ...).
-app.get('/api/areas', (req, res) => {
+app.get('/api/areas', requireAuth, (req, res) => {
   const rows = db
     .prepare(`SELECT DISTINCT area FROM recipes WHERE area IS NOT NULL AND area != '' ORDER BY area`)
     .all();
@@ -564,7 +548,7 @@ app.get('/api/areas', (req, res) => {
 // Tags are finer-grained and freeform (Soup, Curry, Spicy, ...) -- this
 // is what makes "just show me soups" possible even though Soup isn't a
 // category of its own.
-app.get('/api/tags', (req, res) => {
+app.get('/api/tags', requireAuth, (req, res) => {
   const rows = db.prepare(`SELECT tags FROM recipes WHERE tags IS NOT NULL AND tags != ''`).all();
   const seen = new Set();
   for (const row of rows) {
@@ -580,7 +564,7 @@ app.get('/api/tags', (req, res) => {
 // (Northeastern US) -- not location-aware, just a static harvest
 // calendar -- intersected with ingredients actually used in this
 // database so the list is useful rather than aspirational.
-app.get('/api/seasonal/current', (req, res) => {
+app.get('/api/seasonal/current', requireAuth, (req, res) => {
   const season = getCurrentSeason();
   const keywords = keywordsForSeason(season);
   const allIngredients = db.prepare(`SELECT name FROM ingredients`).all();
@@ -591,7 +575,7 @@ app.get('/api/seasonal/current', (req, res) => {
   res.json({ season, ingredients: inSeason });
 });
 
-app.get('/api/recipes/match', (req, res) => {
+app.get('/api/recipes/match', requireAuth, (req, res) => {
   const have = parseList(req.query.have);
   const exclude = parseList(req.query.exclude);
   const category = String(req.query.category || '').trim() || null;
@@ -601,18 +585,14 @@ app.get('/api/recipes/match', (req, res) => {
   const seasonalOnly = req.query.seasonal === 'true';
   const favoriteOnly = req.query.favoritesOnly === 'true';
 
-  // If someone happens to be signed in, lightly de-emphasize what their
-  // own household cooked in the last 10 days -- purely a ranking nudge,
-  // not required for search to work.
+  // Lightly de-emphasize what your own household cooked in the last 10
+  // days -- purely a ranking nudge.
   let recentRecipeIds = new Set();
-  const sessionUser = getSessionUser(req);
-  if (sessionUser) {
-    const row = db.prepare(`SELECT cooked_log FROM households WHERE id = ?`).get(sessionUser.householdId);
-    if (row) {
-      const log = JSON.parse(row.cooked_log);
-      const cutoff = Date.now() - 10 * 24 * 60 * 60 * 1000;
-      recentRecipeIds = new Set(log.filter((e) => new Date(e.date).getTime() >= cutoff).map((e) => e.recipeId));
-    }
+  const row = db.prepare(`SELECT cooked_log FROM households WHERE id = ?`).get(req.user.householdId);
+  if (row) {
+    const log = JSON.parse(row.cooked_log);
+    const cutoff = Date.now() - 10 * 24 * 60 * 60 * 1000;
+    recentRecipeIds = new Set(log.filter((e) => new Date(e.date).getTime() >= cutoff).map((e) => e.recipeId));
   }
 
   // Favorites are per-household, so which household's star this reflects
@@ -648,7 +628,7 @@ app.get('/api/recipes/match', (req, res) => {
   res.json(results);
 });
 
-app.get('/api/recipes/:id', (req, res) => {
+app.get('/api/recipes/:id', requireAuth, (req, res) => {
   const recipe = db.prepare(`SELECT * FROM recipes WHERE id = ?`).get(req.params.id);
   if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
   const ingredients = db

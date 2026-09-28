@@ -19,9 +19,8 @@
         <input id="authUsername" type="text" autocomplete="username" />
         <label for="authPassword">Password</label>
         <input id="authPassword" type="password" autocomplete="current-password" />
-        <p id="authHint" class="form-hint" hidden>Creates a brand-new household. To join an existing one, ask a member for an invite link.</p>
         <button id="authSubmitBtn" type="submit" class="primary full-width">Sign in</button>
-        <button id="authToggleModeBtn" type="button" class="link-btn">Starting a new household? Create one</button>
+        <p class="form-hint">No account? Ask an admin, or a household member for an invite link.</p>
       </form>
 
       <form id="inviteAcceptForm" class="stacked-form" hidden>
@@ -48,8 +47,6 @@
 
       <p id="authError" class="form-error" hidden></p>
       <p id="authSuccess" class="form-success" hidden></p>
-
-      <a id="browseLink" href="/app.html" class="link-btn browse-link">Browse recipes without an account</a>
     </div>
   </main>
   <script src="/login.js"></script>

@@ -259,35 +259,17 @@ async function onSignedIn(data) {
   findDinner().catch(() => {});
 }
 
-function onSignedOut() {
-  state.auth = null;
-  state.liked = [];
-  state.disliked = [];
-  state.planned = [];
-  state.favorites = [];
-  state.pantry = [];
-  renderAccountBar();
-  el.pantryPanel.hidden = true;
-  el.insightsPanel.hidden = true;
-  el.membersPanel.hidden = true;
-  el.browseHouseholdsPanel.hidden = true;
-  el.groceryListWrap.hidden = true;
-  renderTags(state.liked, el.likeTags, 'like', findDinner);
-  renderTags(state.disliked, el.dislikeTags, 'dislike', findDinner);
-  renderSavedExclusionsLine();
-  renderPlannedList([]);
-}
-
+// The app requires a session, full stop -- so signing out (of this
+// device, or of everywhere) leaves nothing on this page worth showing.
+// Straight back to the login page, same as an expired/missing session.
 async function signOut() {
   await fetchJson('/api/auth/logout', { method: 'POST' }).catch(() => {});
-  onSignedOut();
-  findDinner().catch(() => {});
+  window.location.href = '/';
 }
 
 async function signOutAll() {
   await fetchJson('/api/auth/logout-all', { method: 'POST' }).catch(() => {});
-  onSignedOut();
-  findDinner().catch(() => {});
+  window.location.href = '/';
 }
 
 async function loadHouseholdState() {
@@ -1138,24 +1120,28 @@ el.nameSearchInput.addEventListener('input', () => {
 });
 
 (async function init() {
+  // The whole app requires a session now -- no anonymous browsing --
+  // so check that before touching anything else (those endpoints would
+  // just 401 for a signed-out visitor anyway).
+  let me;
+  try {
+    me = await fetchJson('/api/auth/me');
+  } catch {
+    window.location.href = '/';
+    return;
+  }
+  // A bookmarked/direct link to app.html shouldn't let a
+  // must-change-password account (e.g. a freshly admin-created one)
+  // past this screen either -- the login page is where that gets
+  // resolved.
+  if (me.mustChangePassword) {
+    window.location.href = '/?changePassword=1';
+    return;
+  }
+
   loadCategories().catch(() => {});
   loadAreas().catch(() => {});
   loadTags().catch(() => {});
   loadSeasonal().catch(() => {});
-
-  try {
-    const me = await fetchJson('/api/auth/me');
-    // Shouldn't normally happen -- the login page gates this -- but a
-    // bookmarked/direct link to app.html shouldn't let a
-    // must-change-password account (e.g. a freshly admin-created one)
-    // past this screen either.
-    if (me.mustChangePassword) {
-      window.location.href = '/?changePassword=1';
-      return;
-    }
-    await onSignedIn(me);
-  } catch {
-    onSignedOut();
-    findDinner().catch(() => {}); // browse mode -- show something immediately
-  }
+  await onSignedIn(me);
 })();

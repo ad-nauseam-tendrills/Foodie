@@ -247,11 +247,30 @@ a household shares its liked/disliked ingredients, meal plan, pantry,
 and cooked history, while keeping their own login. Login rate limiting
 (8 attempts / 10 min per IP+household+username) is in-memory and resets
 on restart -- fine for a single small instance, not something that
-survives a process crash mid-attack. Signing in, creating a household,
-accepting an invite, and changing a password all live on their own
-landing page (`/`) -- not squeezed into the app's topbar -- and the app
-itself (`/app.html`) redirects there for anything it can't handle
-itself.
+survives a process crash mid-attack. Signing in, accepting an invite,
+and changing a password all live on their own landing page (`/`) -- not
+squeezed into the app's topbar -- and the app itself (`/app.html`)
+redirects there for anything it can't handle itself, including simply
+not being signed in: **there's no anonymous/browse mode.** Every page
+and every API route (health check aside) requires a session; visiting
+`/app.html` signed out just bounces you back to `/`.
+
+**Self-signup is disabled.** There is no way to create a household from
+the login page -- it was live for a while and got used to spray junk
+households at the site, including one literally named
+`<img src=x onerror=alert(1)>` (harmless here since every place a
+household name is rendered uses `textContent`/escaped `innerHTML`, never
+raw HTML, but not something worth leaving open regardless). The only
+ways to get an account now: an admin creates one directly from the
+**Admin** panel, or an existing member sends you an invite link.
+`POST /api/auth/signup` itself still exists but always returns 403 --
+kept rather than deleted so re-enabling self-serve later, if ever
+wanted, is a one-line change (see git history for the full original
+implementation). Household names are also now validated at creation
+(`HOUSEHOLD_NAME_RE` in `server/index.js`) -- letters, numbers, spaces,
+and a small set of real-name punctuation, 1-60 characters -- closing off
+that class of input at the source instead of relying only on
+output-side escaping.
 
 **Password policy**: at least 14 characters, no other complexity rules
 (no forced uppercase/digit/symbol -- length plus "not an obviously
@@ -269,9 +288,9 @@ admin-created accounts, and admin password resets.
 Any signed-in user can change their own password any time from the
 account bar, and (new accounts aside) can sign out of every session at
 once (`POST /api/auth/logout-all`) -- not just the current browser --
-for a lost/stolen device or "I left myself logged in somewhere." Login,
-signup, and accept-invite are all rate-limited per IP (8 attempts / 10
-min, in-memory, resets on restart); expired sessions are swept from the
+for a lost/stolen device or "I left myself logged in somewhere." Login
+and accept-invite are both rate-limited per IP (8 attempts / 10 min,
+in-memory, resets on restart); expired sessions are swept from the
 database hourly rather than only being cleaned up lazily when someone
 tries to use one.
 
@@ -299,14 +318,15 @@ yourself than send them a link. An admin can also **reset an existing
 user's password** the same way -- there's no self-service "forgot
 password" (no email to send a reset link through), so this is the
 fallback when someone's locked out. A reset invalidates every existing
-session for that account, same as a stolen-password precaution.
+session for that account, same as a stolen-password precaution. The
+Admin panel can also delete a household outright (cascades to its
+users/pantry/invites via `ON DELETE CASCADE`) -- for cleaning up junk or
+a household nobody uses; it refuses to delete the admin's own household,
+since that would also delete their own account out from under them.
 
-**Joining a household is invite-only** the other way (non-admin). Signing up (`POST
-/api/auth/signup`) only ever creates a brand-new household -- if the
-name's already taken, it's rejected rather than letting you sign into
-someone else's. To add someone to an *existing* household, a current
-member generates an invite link from the Household members panel
-("Invite someone") and sends it to them however they want -- text,
+**Joining an existing household is invite-only.** A current member
+generates an invite link from the Household members panel ("Invite
+someone") and sends it to them however they want -- text,
 email, whatever. **The app never sends the email itself** -- there's no
 outbound mail provider wired up (a deliberate choice for now: it would
 mean either a third-party transactional-email account or standing up
@@ -405,14 +425,14 @@ another one.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/ingredients?q=` | Autocomplete over known ingredient names |
-| `GET /api/categories` | Distinct recipe categories |
-| `GET /api/areas` | Distinct cuisines/regions |
-| `GET /api/tags` | Distinct recipe tags |
-| `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) |
-| `GET /api/recipes/match?have=a,b&exclude=c&category=&area=&tag=&seasonal=true&q=&favoritesOnly=true&household=` | Ranked recipe matches (works signed out). `q` searches by name; `household` scopes favorites/`isFavorite` to that household (always your own, even while browsing another read-only); de-emphasizes your own household's recently-cooked recipes if signed in |
-| `GET /api/recipes/:id` | Full recipe detail |
-| `POST /api/auth/signup` | Create a *new* household + its first account (`{household, username, password}`) -- 409s if that household already exists |
+| `GET /api/ingredients?q=` | Autocomplete over known ingredient names -- requires sign-in |
+| `GET /api/categories` | Distinct recipe categories -- requires sign-in |
+| `GET /api/areas` | Distinct cuisines/regions -- requires sign-in |
+| `GET /api/tags` | Distinct recipe tags -- requires sign-in |
+| `GET /api/seasonal/current` | Current season + in-season ingredients (Northeast US estimate) -- requires sign-in |
+| `GET /api/recipes/match?have=a,b&exclude=c&category=&area=&tag=&seasonal=true&q=&favoritesOnly=true&household=` | Ranked recipe matches -- requires sign-in. `q` searches by name; `household` scopes favorites/`isFavorite` to that household (always your own, even while browsing another read-only); de-emphasizes your own household's recently-cooked recipes |
+| `GET /api/recipes/:id` | Full recipe detail -- requires sign-in |
+| `POST /api/auth/signup` | **Disabled** -- always 403s. Left in place rather than deleted; see "Self-signup is disabled" above |
 | `POST /api/auth/login` | Sign in, sets the session cookie |
 | `POST /api/auth/logout` | Sign out (current session only) |
 | `POST /api/auth/logout-all` | Sign out of every session for this account, everywhere |
@@ -445,6 +465,7 @@ another one.
 | `POST /api/admin/users` | Admin only: create a user directly (`{household, username, password, isAdmin?}`) -- always must-change-password |
 | `POST /api/admin/users/:id/reset-password` | Admin only: set a new temporary password for an existing user (`{password}`) -- forces must-change-password, kills their existing sessions |
 | `DELETE /api/admin/users/:id` | Admin only: delete a user (not yourself) |
+| `DELETE /api/admin/households/:name` | Admin only: delete a household and cascade its users/pantry/invites (not your own household) |
 
 ## Roadmap / ideas not built yet
 
