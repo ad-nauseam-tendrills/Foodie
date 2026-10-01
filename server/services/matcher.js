@@ -33,7 +33,7 @@ function parseTags(tagsField) {
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {{
  *   have?: string[], exclude?: string[], recentRecipeIds?: Set<number>, limit?: number,
- *   category?: string, tag?: string, area?: string, nameQuery?: string,
+ *   category?: string, tags?: string[], area?: string, nameQuery?: string,
  *   favoriteIds?: Set<number>, favoriteOnly?: boolean,
  *   seasonalKeywords?: string[], seasonalOnly?: boolean,
  * }} opts
@@ -46,7 +46,9 @@ function matchRecipes(db, opts = {}) {
   const favoriteOnly = !!opts.favoriteOnly;
   const limit = opts.limit || 30;
   const category = opts.category ? normalize(opts.category) : null;
-  const tag = opts.tag ? normalize(opts.tag) : null;
+  // Multiple tags are AND'd -- picking "Soup" and "Spicy" means both, not
+  // either, which is what faceted tag selection usually means.
+  const tags = (opts.tags || []).map(normalize).filter(Boolean);
   const area = opts.area ? normalize(opts.area) : null;
   const nameQuery = opts.nameQuery ? normalize(opts.nameQuery) : null;
   const seasonalKeywords = opts.seasonalKeywords || null;
@@ -68,7 +70,7 @@ function matchRecipes(db, opts = {}) {
     if (favoriteOnly && !favoriteIds.has(recipe.id)) continue;
 
     const recipeTags = parseTags(recipe.tags);
-    if (tag && !recipeTags.some((t) => normalize(t).includes(tag))) continue;
+    if (tags.length && !tags.every((t) => recipeTags.some((rt) => normalize(rt).includes(t)))) continue;
 
     const ingredients = ingredientsStmt.all(recipe.id);
     if (ingredients.length === 0) continue;

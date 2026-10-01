@@ -13,24 +13,22 @@
       <p class="landing-tagline">Self-hosted, ad-free "what's for dinner?"</p>
 
       <form id="authForm" class="stacked-form" hidden>
-        <label for="authHousehold">Household</label>
-        <input id="authHousehold" type="text" autocomplete="organization" />
-        <label for="authUsername">Username</label>
-        <input id="authUsername" type="text" autocomplete="username" />
+        <label for="authEmail">Email</label>
+        <input id="authEmail" type="text" autocomplete="email" />
         <label for="authPassword">Password</label>
         <input id="authPassword" type="password" autocomplete="current-password" />
         <button id="authSubmitBtn" type="submit" class="primary full-width">Sign in</button>
-        <p class="form-hint">No account? Ask an admin, or a household member for an invite link.</p>
+        <p class="form-hint">No account? Ask an admin, or an existing user for an invite link.</p>
       </form>
 
       <form id="inviteAcceptForm" class="stacked-form" hidden>
-        <p id="inviteHouseholdLabel" class="form-hint"></p>
-        <label for="inviteUsername">Username</label>
-        <input id="inviteUsername" type="text" autocomplete="username" />
+        <p id="inviteNoteLabel" class="form-hint"></p>
+        <label for="inviteEmail">Email</label>
+        <input id="inviteEmail" type="text" autocomplete="email" />
         <label for="invitePassword">Password</label>
         <input id="invitePassword" type="password" autocomplete="new-password" />
         <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
-        <button id="inviteAcceptBtn" type="submit" class="primary full-width">Join household</button>
+        <button id="inviteAcceptBtn" type="submit" class="primary full-width">Create account</button>
         <button id="inviteCancelBtn" type="button" class="link-btn">Not you? Use a different account</button>
       </form>
 

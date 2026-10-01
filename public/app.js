@@ -1,12 +1,15 @@
 'use strict';
 
 const state = {
-  auth: null, // { username, household, isAdmin } once signed in
+  auth: null, // { email, isAdmin } once signed in
   liked: [],
   disliked: [],
+  filterTags: [], // tag filter chips (AND'd together)
   planned: [], // recipe IDs currently in the meal plan
-  favorites: [], // recipe IDs saved by your own household
-  pantry: [], // structured pantry items: { ingredient, quantity, unit, price, store, addedBy, ... }
+  favorites: [], // recipe IDs saved by this account
+  pantry: [], // structured pantry items: { ingredient, quantity, unit, price, store, ... }
+  lastResults: [], // most recent /api/recipes/match results, for client-side re-sort
+  allUsers: [], // cached /api/users listing, for the browse panel's search box
 };
 
 const el = {
@@ -36,12 +39,15 @@ const el = {
   categorySelect: document.getElementById('categorySelect'),
   areaSelect: document.getElementById('areaSelect'),
   tagInput: document.getElementById('tagInput'),
+  filterTags: document.getElementById('filterTags'),
   tagOptions: document.getElementById('tagOptions'),
   quickToggle: document.getElementById('quickToggle'),
   seasonalToggle: document.getElementById('seasonalToggle'),
   seasonalLabel: document.getElementById('seasonalLabel'),
   seasonalInfoBtn: document.getElementById('seasonalInfoBtn'),
   seasonalInfoBox: document.getElementById('seasonalInfoBox'),
+  sortSelect: document.getElementById('sortSelect'),
+  clearFiltersBtn: document.getElementById('clearFiltersBtn'),
   plannedList: document.getElementById('plannedList'),
   planEmptyState: document.getElementById('planEmptyState'),
   groceryListWrap: document.getElementById('groceryListWrap'),
@@ -63,25 +69,24 @@ const el = {
   unlockEmpty: document.getElementById('unlockEmpty'),
   restockList: document.getElementById('restockList'),
   restockEmpty: document.getElementById('restockEmpty'),
-  membersPanel: document.getElementById('membersPanel'),
-  membersList: document.getElementById('membersList'),
+  invitePanel: document.getElementById('invitePanel'),
   inviteNote: document.getElementById('inviteNote'),
   generateInviteBtn: document.getElementById('generateInviteBtn'),
   inviteLinkBox: document.getElementById('inviteLinkBox'),
   inviteLinkOutput: document.getElementById('inviteLinkOutput'),
   copyInviteLinkBtn: document.getElementById('copyInviteLinkBtn'),
   pendingInvitesList: document.getElementById('pendingInvitesList'),
-  browseHouseholdsPanel: document.getElementById('browseHouseholdsPanel'),
-  householdSelect: document.getElementById('householdSelect'),
-  loadHouseholdBtn: document.getElementById('loadHouseholdBtn'),
-  browseHouseholdResult: document.getElementById('browseHouseholdResult'),
-  browseHouseholdTitle: document.getElementById('browseHouseholdTitle'),
+  browseUsersPanel: document.getElementById('browseUsersPanel'),
+  userSearchInput: document.getElementById('userSearchInput'),
+  userBrowseList: document.getElementById('userBrowseList'),
+  browseUserResult: document.getElementById('browseUserResult'),
+  browseUserTitle: document.getElementById('browseUserTitle'),
+  browseUserCookStats: document.getElementById('browseUserCookStats'),
   browseLiked: document.getElementById('browseLiked'),
   browseDisliked: document.getElementById('browseDisliked'),
   browsePlanned: document.getElementById('browsePlanned'),
   browsePantryList: document.getElementById('browsePantryList'),
   browsePantryEmpty: document.getElementById('browsePantryEmpty'),
-  browseMembersList: document.getElementById('browseMembersList'),
 };
 
 // ---------- Tag input helper --------------------------------------------
@@ -159,6 +164,24 @@ function wireTagInput({ input, tagsContainer, suggestionsContainer, list, kind, 
   });
 }
 
+// A chip list with no autocomplete fetch behind it -- used for the recipe
+// tag filter, where the options come from a <datalist> instead of an
+// ingredient search.
+function wireTagChipInput({ input, tagsContainer, list, onChange }) {
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(list, tagsContainer, 'filter', input.value, onChange);
+      input.value = '';
+      if (onChange) onChange();
+    } else if (e.key === 'Backspace' && !input.value && list.length) {
+      list.pop();
+      renderTags(list, tagsContainer, 'filter', onChange);
+      if (onChange) onChange();
+    }
+  });
+}
+
 // Simple single-value autocomplete (not a tag list) -- used for the
 // pantry ingredient input, which adds one item at a time rather than
 // building up a chip list.
@@ -213,49 +236,27 @@ function postJson(url, body) {
 }
 
 // ---------- Auth (signing in/up/accepting invites lives on the login
-// page -- this is just the signed-in/signed-out indicator + sign-out) --
-
-// Recipe browsing works fine while signed out; only household-scoped
-// actions (save preferences, meal plan, pantry) need an account. This
-// points people at the login page rather than failing silently.
-function warnNotSignedIn(message) {
-  el.accountStatusText.textContent = message;
-  el.accountStatusText.classList.add('warn');
-  el.accountBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  setTimeout(() => {
-    el.accountStatusText.classList.remove('warn');
-    renderAccountBar();
-  }, 3000);
-}
+// page -- this is just the signed-in indicator + sign-out) --
 
 function renderAccountBar() {
-  if (state.auth) {
-    el.accountStatusText.textContent = `${state.auth.username} @ ${state.auth.household}`;
-    el.adminLink.hidden = !state.auth.isAdmin;
-    el.changePasswordLink.hidden = false;
-    el.signOutBtn.hidden = false;
-    el.signOutAllBtn.hidden = false;
-    el.signInLink.hidden = true;
-  } else {
-    el.accountStatusText.textContent = 'Browsing without an account';
-    el.adminLink.hidden = true;
-    el.changePasswordLink.hidden = true;
-    el.signOutBtn.hidden = true;
-    el.signOutAllBtn.hidden = true;
-    el.signInLink.hidden = false;
-  }
+  el.accountStatusText.textContent = state.auth.email;
+  el.adminLink.hidden = !state.auth.isAdmin;
+  el.changePasswordLink.hidden = false;
+  el.signOutBtn.hidden = false;
+  el.signOutAllBtn.hidden = false;
+  el.signInLink.hidden = true;
 }
 
 async function onSignedIn(data) {
-  state.auth = { username: data.username, household: data.household, isAdmin: !!data.isAdmin };
+  state.auth = { email: data.email, isAdmin: !!data.isAdmin };
   renderAccountBar();
   el.pantryPanel.hidden = false;
   el.insightsPanel.hidden = false;
-  el.membersPanel.hidden = false;
-  el.browseHouseholdsPanel.hidden = false;
+  el.invitePanel.hidden = false;
+  el.browseUsersPanel.hidden = false;
 
-  await loadHouseholdState();
-  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadMembers(), loadInvites(), loadHouseholdOptions()]);
+  await loadMeState();
+  await Promise.all([loadPantry(), loadGroceryList(), loadInsights(), loadInvites(), loadUsersList()]);
   findDinner().catch(() => {});
 }
 
@@ -272,8 +273,8 @@ async function signOutAll() {
   window.location.href = '/';
 }
 
-async function loadHouseholdState() {
-  const data = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}`);
+async function loadMeState() {
+  const data = await fetchJson('/api/me');
   state.liked = data.liked;
   state.disliked = data.disliked;
   state.planned = data.planned || [];
@@ -293,20 +294,28 @@ function renderSavedExclusionsLine() {
 }
 
 async function savePreferences() {
-  if (!state.auth) {
-    warnNotSignedIn('Sign in first to save preferences');
-    return;
-  }
-  await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/preferences`, {
+  await fetchJson('/api/me/preferences', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ liked: state.liked, disliked: state.disliked }),
   });
-  el.accountStatusText.textContent = `${state.auth.username} @ ${state.auth.household} -- saved`;
+  el.accountStatusText.textContent = `${state.auth.email} -- saved`;
   renderSavedExclusionsLine();
 }
 
 // ---------- Matching & rendering ------------------------------------------
+
+function activeFilterCount() {
+  let count = 0;
+  if (el.nameSearchInput.value.trim()) count += 1;
+  if (el.categorySelect.value) count += 1;
+  if (el.areaSelect.value) count += 1;
+  if (el.quickToggle.checked) count += 1;
+  else if (state.filterTags.length) count += 1;
+  if (el.favoritesOnlyToggle.checked) count += 1;
+  if (el.seasonalToggle.checked) count += 1;
+  return count;
+}
 
 async function findDinner() {
   const have = state.liked.join(',');
@@ -317,26 +326,40 @@ async function findDinner() {
   const areaParam = area ? `&area=${encodeURIComponent(area)}` : '';
   // The quick-toggle takes over the tag filter (server-side "quick" is
   // just the existing "Quick" tag, applied on curated recipes like
-  // sloppy joes, potato pancakes, pancakes, ...) -- keeping this to one
-  // active tag at a time avoids needing to support combining tags.
-  const tag = el.quickToggle.checked ? 'Quick' : el.tagInput.value.trim();
-  const tagParam = tag ? `&tag=${encodeURIComponent(tag)}` : '';
+  // sloppy joes, potato pancakes, pancakes, ...) without discarding
+  // whatever tags were already picked -- unchecking it brings them back.
+  const tags = el.quickToggle.checked ? ['Quick'] : state.filterTags;
+  const tagParam = tags.length ? `&tag=${encodeURIComponent(tags.join(','))}` : '';
   const seasonalParam = el.seasonalToggle.checked ? `&seasonal=true` : '';
   const nameQuery = el.nameSearchInput.value.trim();
   const nameParam = nameQuery ? `&q=${encodeURIComponent(nameQuery)}` : '';
   const favoritesOnlyParam = el.favoritesOnlyToggle.checked ? `&favoritesOnly=true` : '';
-  // Favorites/plan context is always your own household's, even while
-  // browsing another one read-only elsewhere on the page -- searching
+  // Favorites/plan context is always your own, even while browsing
+  // another user's data read-only elsewhere on the page -- searching
   // should never quietly start reflecting someone else's saved recipes.
-  const householdParam = state.auth ? `&household=${encodeURIComponent(state.auth.household)}` : '';
+  const emailParam = state.auth ? `&email=${encodeURIComponent(state.auth.email)}` : '';
   el.results.innerHTML = '<p class="empty-state">Looking…</p>';
 
   const recipes = await fetchJson(
     `/api/recipes/match?have=${encodeURIComponent(have)}&exclude=${encodeURIComponent(exclude)}` +
-      `${categoryParam}${areaParam}${tagParam}${seasonalParam}${nameParam}${favoritesOnlyParam}${householdParam}`
+      `${categoryParam}${areaParam}${tagParam}${seasonalParam}${nameParam}${favoritesOnlyParam}${emailParam}`
   );
+  state.lastResults = recipes;
+  renderResults();
+}
 
-  el.resultsCount.textContent = recipes.length ? `${recipes.length} matches` : '';
+function renderResults() {
+  const recipes = [...state.lastResults];
+  if (el.sortSelect.value === 'name') {
+    recipes.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  const filterCount = activeFilterCount();
+  el.resultsCount.textContent = recipes.length
+    ? `${recipes.length} match${recipes.length === 1 ? '' : 'es'}${filterCount ? ` · ${filterCount} filter${filterCount === 1 ? '' : 's'} active` : ''}`
+    : filterCount
+      ? `0 matches · ${filterCount} filter${filterCount === 1 ? '' : 's'} active`
+      : '';
   el.results.innerHTML = '';
 
   if (!recipes.length) {
@@ -347,6 +370,20 @@ async function findDinner() {
   for (const recipe of recipes) {
     el.results.appendChild(renderRecipeCard(recipe));
   }
+}
+
+function clearFilters() {
+  el.nameSearchInput.value = '';
+  el.categorySelect.value = '';
+  el.areaSelect.value = '';
+  el.quickToggle.checked = false;
+  el.tagInput.disabled = false;
+  state.filterTags = [];
+  renderTags(state.filterTags, el.filterTags, 'filter', null);
+  el.favoritesOnlyToggle.checked = false;
+  el.seasonalToggle.checked = false;
+  el.sortSelect.value = 'match';
+  findDinner();
 }
 
 function renderRecipeCard(recipe) {
@@ -422,11 +459,9 @@ function createFavoriteButton(recipeId, isFavorite) {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (active) {
-      await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/favorites/${recipeId}`, {
-        method: 'DELETE',
-      });
+      await fetchJson(`/api/me/favorites/${recipeId}`, { method: 'DELETE' });
     } else {
-      await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/favorites`, { recipeId });
+      await postJson('/api/me/favorites', { recipeId });
     }
     active = !active;
     btn.className = 'favorite-btn' + (active ? ' active' : '');
@@ -486,12 +521,12 @@ async function openRecipeModal(id) {
     cookedBtn.className = 'primary';
     cookedBtn.textContent = "We're making this tonight";
     cookedBtn.addEventListener('click', async () => {
-      await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/cooked`, { recipeId: recipe.id });
+      await postJson('/api/me/cooked', { recipeId: recipe.id });
       cookedBtn.textContent = 'Logged ✓';
       cookedBtn.disabled = true;
       // Cooking can consume tracked pantry quantities -- refresh
       // everything that depends on pantry state.
-      await Promise.all([loadPantry(), loadInsights(), loadMembers()]);
+      await Promise.all([loadPantry(), loadInsights()]);
     });
     actions.appendChild(cookedBtn);
 
@@ -561,7 +596,7 @@ function toggleSeasonalInfo() {
 // ---------- Meal plan + grocery list ---------------------------------------
 
 function groceryCheckedKey() {
-  return `foodie_grocery_checked_${state.auth ? state.auth.household : ''}`;
+  return `foodie_grocery_checked_${state.auth ? state.auth.email : ''}`;
 }
 
 function getCheckedIngredients() {
@@ -584,26 +619,20 @@ function setIngredientChecked(name, checked) {
 }
 
 async function addToPlan(recipeId) {
-  if (!state.auth) {
-    warnNotSignedIn('Sign in first to start a meal plan');
-    return;
-  }
-  const data = await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/plan`, { recipeId });
+  const data = await postJson('/api/me/plan', { recipeId });
   state.planned = data.planned;
   await loadGroceryList();
 }
 
 async function removeFromPlan(recipeId) {
-  const data = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/plan/${recipeId}`, {
-    method: 'DELETE',
-  });
+  const data = await fetchJson(`/api/me/plan/${recipeId}`, { method: 'DELETE' });
   state.planned = data.planned;
   await loadGroceryList();
 }
 
 async function loadGroceryList() {
   if (!state.auth) return;
-  const { recipes, items } = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/grocery-list`);
+  const { recipes, items } = await fetchJson('/api/me/grocery-list');
   renderPlannedList(recipes);
   renderGroceryList(items);
 }
@@ -684,9 +713,7 @@ function renderGroceryList(items) {
       haveItBtn.textContent = '✕ have it';
       haveItBtn.title = 'Already have this -- add to pantry and stop listing it';
       haveItBtn.addEventListener('click', async () => {
-        await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry`, {
-          ingredient: item.ingredient,
-        });
+        await postJson('/api/me/pantry', { ingredient: item.ingredient });
         await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
       });
       li.appendChild(haveItBtn);
@@ -722,7 +749,7 @@ function createAddToPlanButton(recipeId) {
 
 async function loadPantry() {
   if (!state.auth) return;
-  state.pantry = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry`);
+  state.pantry = await fetchJson('/api/me/pantry');
   renderPantryInventory();
 }
 
@@ -745,7 +772,6 @@ function renderPantryInventory() {
     const detailParts = [];
     if (item.price !== null) detailParts.push(`$${item.price.toFixed(2)}${item.store ? ` at ${item.store}` : ''}`);
     else if (item.store) detailParts.push(item.store);
-    if (item.addedBy) detailParts.push(`added by ${item.addedBy}`);
     if (detailParts.length) {
       const detail = document.createElement('span');
       detail.className = 'pantry-item-detail';
@@ -785,10 +811,6 @@ function renderPantryInventory() {
 }
 
 async function addPantryItem() {
-  if (!state.auth) {
-    warnNotSignedIn('Sign in first to track your pantry');
-    return;
-  }
   const ingredient = el.pantryIngredient.value.trim();
   if (!ingredient) return;
   const body = { ingredient };
@@ -797,7 +819,7 @@ async function addPantryItem() {
   if (el.pantryPrice.value !== '') body.price = Number(el.pantryPrice.value);
   if (el.pantryStore.value.trim()) body.store = el.pantryStore.value.trim();
 
-  await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry`, body);
+  await postJson('/api/me/pantry', body);
 
   el.pantryIngredient.value = '';
   el.pantryQuantity.value = '';
@@ -810,7 +832,7 @@ async function addPantryItem() {
 }
 
 async function pantryItemAction(ingredient, action) {
-  await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/${encodeURIComponent(ingredient)}`, {
+  await fetchJson(`/api/me/pantry/${encodeURIComponent(ingredient)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
@@ -819,9 +841,7 @@ async function pantryItemAction(ingredient, action) {
 }
 
 async function deletePantryItem(ingredient) {
-  await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/${encodeURIComponent(ingredient)}`, {
-    method: 'DELETE',
-  });
+  await fetchJson(`/api/me/pantry/${encodeURIComponent(ingredient)}`, { method: 'DELETE' });
   await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
 }
 
@@ -830,8 +850,8 @@ async function deletePantryItem(ingredient) {
 async function loadInsights() {
   if (!state.auth) return;
   const [insights, restock] = await Promise.all([
-    fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/insights`),
-    fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/pantry/restock-suggestions`),
+    fetchJson('/api/me/pantry/insights'),
+    fetchJson('/api/me/pantry/restock-suggestions'),
   ]);
   renderCanMakeNow(insights.canMakeNow);
   renderUnlockList(insights.unlockSuggestions);
@@ -883,37 +903,11 @@ function renderRestockList(suggestions) {
   }
 }
 
-// ---------- Members --------------------------------------------------------
-
-async function loadMembers() {
-  if (!state.auth) return;
-  const members = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/members`);
-  renderMembers(members);
-}
-
-function renderMembers(members) {
-  el.membersList.innerHTML = '';
-  for (const m of members) {
-    const li = document.createElement('li');
-    li.className = 'member-item' + (m.isYou ? ' is-you' : '');
-    const strong = document.createElement('strong');
-    strong.textContent = m.isYou ? `${m.username} (you)` : m.username;
-    li.appendChild(strong);
-    const detail = document.createElement('div');
-    detail.className = 'member-detail';
-    detail.textContent = m.cookCount
-      ? `cooked ${m.cookCount}x • favorites: ${m.topRecipes.map((r) => r.name).join(', ')}`
-      : 'nothing logged yet';
-    li.appendChild(detail);
-    el.membersList.appendChild(li);
-  }
-}
-
-// ---------- Invites (invite-only joins) -------------------------------
+// ---------- Invites (the only way to get a new account besides admin) --
 
 async function loadInvites() {
   if (!state.auth) return;
-  const invites = await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/invites`);
+  const invites = await fetchJson('/api/invites');
   renderInvites(invites);
 }
 
@@ -931,7 +925,7 @@ function renderInvites(invites) {
     const label = invite.note ? ` -- ${invite.note}` : '';
     const detail =
       invite.status === 'used'
-        ? `${label} (joined as ${invite.usedBy})`
+        ? `${label} (created ${invite.usedByEmail})`
         : invite.status === 'expired'
           ? `${label} (expired ${new Date(invite.expiresAt).toLocaleDateString()})`
           : `${label} (expires ${new Date(invite.expiresAt).toLocaleDateString()})`;
@@ -943,9 +937,7 @@ function renderInvites(invites) {
       revokeBtn.type = 'button';
       revokeBtn.textContent = 'revoke';
       revokeBtn.addEventListener('click', async () => {
-        await fetchJson(`/api/households/${encodeURIComponent(state.auth.household)}/invites/${invite.id}`, {
-          method: 'DELETE',
-        });
+        await fetchJson(`/api/invites/${invite.id}`, { method: 'DELETE' });
         await loadInvites();
       });
       li.appendChild(revokeBtn);
@@ -956,9 +948,8 @@ function renderInvites(invites) {
 }
 
 async function generateInvite() {
-  if (!state.auth) return;
   const note = el.inviteNote.value.trim();
-  const data = await postJson(`/api/households/${encodeURIComponent(state.auth.household)}/invites`, note ? { note } : {});
+  const data = await postJson('/api/invites', note ? { note } : {});
   el.inviteNote.value = '';
   el.inviteLinkBox.hidden = false;
   el.inviteLinkOutput.value = data.url;
@@ -981,42 +972,71 @@ async function copyInviteLink() {
   }, 1500);
 }
 
-// ---------- Browse other households (read-only) ---------------------------
+// ---------- Browse other users (read-only) ---------------------------
 //
-// Any signed-in user can view any household's data -- this is separate
+// Any signed-in user can view any other user's data -- this is separate
 // from the main search/plan/pantry panels above, which always stay bound
-// to your own household, so looking at someone else's never quietly
-// starts acting on their behalf.
+// to your own account, so looking at someone else's never quietly starts
+// acting on their behalf.
 
-async function loadHouseholdOptions() {
-  const households = await fetchJson('/api/households');
-  el.householdSelect.innerHTML = '';
-  for (const h of households) {
-    const option = document.createElement('option');
-    option.value = h.name;
-    const isOwn = state.auth && h.name.toLowerCase() === state.auth.household.toLowerCase();
-    option.textContent = `${h.name} (${h.memberCount} member${h.memberCount === 1 ? '' : 's'})${isOwn ? ' -- you' : ''}`;
-    el.householdSelect.appendChild(option);
+async function loadUsersList() {
+  state.allUsers = await fetchJson('/api/users');
+  renderUserBrowseList();
+}
+
+function renderUserBrowseList() {
+  const query = el.userSearchInput.value.trim().toLowerCase();
+  const filtered = query ? state.allUsers.filter((u) => u.email.toLowerCase().includes(query)) : state.allUsers;
+
+  el.userBrowseList.innerHTML = '';
+  if (filtered.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'member-item muted';
+    li.textContent = 'No users match that search.';
+    el.userBrowseList.appendChild(li);
+    return;
+  }
+
+  for (const u of filtered) {
+    const li = document.createElement('li');
+    li.className = 'member-item' + (u.isYou ? ' is-you' : '');
+
+    const strong = document.createElement('strong');
+    strong.textContent = u.isYou ? `${u.email} (you)` : u.email;
+    li.appendChild(strong);
+
+    const detail = document.createElement('div');
+    detail.className = 'member-detail';
+    detail.textContent = u.cookCount ? `cooked ${u.cookCount}x` : 'nothing logged yet';
+    li.appendChild(detail);
+
+    const viewBtn = document.createElement('button');
+    viewBtn.type = 'button';
+    viewBtn.textContent = 'view';
+    viewBtn.addEventListener('click', () => loadOtherUser(u.email).catch(() => {}));
+    li.appendChild(viewBtn);
+
+    el.userBrowseList.appendChild(li);
   }
 }
 
-async function loadOtherHousehold() {
-  const name = el.householdSelect.value;
-  if (!name) return;
-  const [householdData, pantry, members] = await Promise.all([
-    fetchJson(`/api/households/${encodeURIComponent(name)}`),
-    fetchJson(`/api/households/${encodeURIComponent(name)}/pantry`),
-    fetchJson(`/api/households/${encodeURIComponent(name)}/members`),
+async function loadOtherUser(email) {
+  const [userData, pantry] = await Promise.all([
+    fetchJson(`/api/users/${encodeURIComponent(email)}`),
+    fetchJson(`/api/users/${encodeURIComponent(email)}/pantry`),
   ]);
 
-  el.browseHouseholdResult.hidden = false;
-  el.browseHouseholdTitle.textContent = name;
-  el.browseLiked.textContent = householdData.liked.length ? householdData.liked.join(', ') : 'nothing saved';
-  el.browseDisliked.textContent = householdData.disliked.length ? householdData.disliked.join(', ') : 'nothing saved';
+  el.browseUserResult.hidden = false;
+  el.browseUserTitle.textContent = email;
+  el.browseUserCookStats.textContent = userData.cookCount
+    ? `cooked ${userData.cookCount}x -- favorites: ${userData.topRecipes.map((r) => r.name).join(', ') || 'none logged'}`
+    : 'nothing cooked/logged yet';
+  el.browseLiked.textContent = userData.liked.length ? userData.liked.join(', ') : 'nothing saved';
+  el.browseDisliked.textContent = userData.disliked.length ? userData.disliked.join(', ') : 'nothing saved';
 
-  if (householdData.planned.length) {
+  if (userData.planned.length) {
     const recipeNames = await Promise.all(
-      householdData.planned.map((id) => fetchJson(`/api/recipes/${id}`).then((r) => r.name).catch(() => null))
+      userData.planned.map((id) => fetchJson(`/api/recipes/${id}`).then((r) => r.name).catch(() => null))
     );
     el.browsePlanned.textContent = recipeNames.filter(Boolean).join(', ') || 'nothing planned';
   } else {
@@ -1034,17 +1054,7 @@ async function loadOtherHousehold() {
     el.browsePantryList.appendChild(li);
   }
 
-  el.browseMembersList.innerHTML = '';
-  for (const m of members) {
-    const li = document.createElement('li');
-    li.className = 'member-item';
-    li.innerHTML = `<strong>${m.username}</strong>`;
-    const detail = document.createElement('div');
-    detail.className = 'member-detail';
-    detail.textContent = m.cookCount ? `cooked ${m.cookCount}x -- favorites: ${m.topRecipes.map((r) => r.name).join(', ')}` : 'nothing logged yet';
-    li.appendChild(detail);
-    el.browseMembersList.appendChild(li);
-  }
+  el.browseUserResult.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ---------- Wire up --------------------------------------------------------
@@ -1067,20 +1077,24 @@ wireTagInput({
   onChange: findDinner,
 });
 
+wireTagChipInput({
+  input: el.tagInput,
+  tagsContainer: el.filterTags,
+  list: state.filterTags,
+  onChange: findDinner,
+});
+
 wireIngredientAutocomplete(el.pantryIngredient, el.pantrySuggestions);
 
 el.signOutBtn.addEventListener('click', signOut);
 el.signOutAllBtn.addEventListener('click', signOutAll);
 el.generateInviteBtn.addEventListener('click', generateInvite);
 el.copyInviteLinkBtn.addEventListener('click', copyInviteLink);
-el.loadHouseholdBtn.addEventListener('click', () => loadOtherHousehold().catch(() => {}));
-// The list is only fetched once at sign-in, so without this a household
-// created by someone else *after* your page loaded (like a sibling
-// signing up mid-session) would never show up here until a full reload.
-el.householdSelect.addEventListener('focus', () => loadHouseholdOptions().catch(() => {}));
+el.userSearchInput.addEventListener('input', renderUserBrowseList);
 
 el.saveBtn.addEventListener('click', savePreferences);
 el.matchBtn.addEventListener('click', findDinner);
+el.clearFiltersBtn.addEventListener('click', clearFilters);
 el.modalClose.addEventListener('click', closeModal);
 el.modalOverlay.addEventListener('click', (e) => {
   if (e.target === el.modalOverlay) closeModal();
@@ -1104,15 +1118,10 @@ el.areaSelect.addEventListener('change', findDinner);
 el.seasonalToggle.addEventListener('change', findDinner);
 el.quickToggle.addEventListener('change', () => {
   el.tagInput.disabled = el.quickToggle.checked;
-  if (el.quickToggle.checked) el.tagInput.value = '';
   findDinner();
 });
-let tagDebounce;
-el.tagInput.addEventListener('input', () => {
-  clearTimeout(tagDebounce);
-  tagDebounce = setTimeout(findDinner, 300);
-});
 el.favoritesOnlyToggle.addEventListener('change', findDinner);
+el.sortSelect.addEventListener('change', renderResults);
 let nameSearchDebounce;
 el.nameSearchInput.addEventListener('input', () => {
   clearTimeout(nameSearchDebounce);

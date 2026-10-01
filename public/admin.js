@@ -4,16 +4,16 @@ const el = {
   accountStatusText: document.getElementById('accountStatusText'),
   signOutBtn: document.getElementById('signOutBtn'),
   createUserForm: document.getElementById('createUserForm'),
-  newUserHousehold: document.getElementById('newUserHousehold'),
-  householdOptions: document.getElementById('householdOptions'),
-  newUserUsername: document.getElementById('newUserUsername'),
+  newUserEmail: document.getElementById('newUserEmail'),
   newUserPassword: document.getElementById('newUserPassword'),
   newUserIsAdmin: document.getElementById('newUserIsAdmin'),
   adminError: document.getElementById('adminError'),
   adminSuccess: document.getElementById('adminSuccess'),
-  householdsList: document.getElementById('householdsList'),
+  usersSearch: document.getElementById('usersSearch'),
   usersList: document.getElementById('usersList'),
 };
+
+let allUsers = [];
 
 async function fetchJson(url, options) {
   const res = await fetch(url, { credentials: 'same-origin', ...options });
@@ -34,49 +34,30 @@ function postJson(url, body) {
   });
 }
 
-async function loadHouseholds() {
-  const households = await fetchJson('/api/admin/households');
-  el.householdsList.innerHTML = '';
-  el.householdOptions.innerHTML = '';
-  for (const h of households) {
-    const li = document.createElement('li');
-    li.className = 'admin-list-item';
-
-    const text = document.createElement('span');
-    text.innerHTML = `<strong>${escapeHtml(h.name)}</strong> -- ${h.memberCount} member${h.memberCount === 1 ? '' : 's'}`;
-    li.appendChild(text);
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.textContent = 'delete';
-    deleteBtn.addEventListener('click', async () => {
-      if (!confirm(`Delete household "${h.name}"${h.memberCount ? ` and its ${h.memberCount} member${h.memberCount === 1 ? '' : 's'}` : ''}? This can't be undone.`)) return;
-      try {
-        await fetchJson(`/api/admin/households/${encodeURIComponent(h.name)}`, { method: 'DELETE' });
-        await Promise.all([loadHouseholds(), loadUsers()]);
-      } catch (err) {
-        showError(err.message);
-      }
-    });
-    li.appendChild(deleteBtn);
-
-    el.householdsList.appendChild(li);
-
-    const option = document.createElement('option');
-    option.value = h.name;
-    el.householdOptions.appendChild(option);
-  }
+async function loadUsers() {
+  allUsers = await fetchJson('/api/admin/users');
+  renderUsers();
 }
 
-async function loadUsers() {
-  const users = await fetchJson('/api/admin/users');
+function renderUsers() {
+  const query = el.usersSearch.value.trim().toLowerCase();
+  const filtered = query ? allUsers.filter((u) => u.email.toLowerCase().includes(query)) : allUsers;
+
   el.usersList.innerHTML = '';
-  for (const u of users) {
+  if (filtered.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'admin-list-item muted';
+    li.textContent = query ? 'No users match that search.' : 'No users yet.';
+    el.usersList.appendChild(li);
+    return;
+  }
+
+  for (const u of filtered) {
     const li = document.createElement('li');
     li.className = 'admin-list-item';
 
     const text = document.createElement('span');
-    text.innerHTML = `<strong>${escapeHtml(u.username)}</strong> @ ${escapeHtml(u.household)}`;
+    text.innerHTML = `<strong>${escapeHtml(u.email)}</strong>`;
     li.appendChild(text);
 
     const badges = document.createElement('span');
@@ -90,13 +71,13 @@ async function loadUsers() {
     resetBtn.textContent = 'reset password';
     resetBtn.addEventListener('click', async () => {
       const password = prompt(
-        `New temporary password for ${u.username} @ ${u.household}\n` +
+        `New temporary password for ${u.email}\n` +
           `(at least 14 characters, avoid common words/patterns -- they'll be forced to change it on next login)`
       );
       if (password === null) return;
       try {
         await postJson(`/api/admin/users/${u.id}/reset-password`, { password });
-        showSuccess(`Password reset for ${u.username} @ ${u.household} -- give it to them directly.`);
+        showSuccess(`Password reset for ${u.email} -- give it to them directly.`);
         await loadUsers();
       } catch (err) {
         showError(err.message);
@@ -108,10 +89,10 @@ async function loadUsers() {
     deleteBtn.type = 'button';
     deleteBtn.textContent = 'delete';
     deleteBtn.addEventListener('click', async () => {
-      if (!confirm(`Delete ${u.username} @ ${u.household}? This can't be undone.`)) return;
+      if (!confirm(`Delete ${u.email}? This can't be undone.`)) return;
       try {
         await fetchJson(`/api/admin/users/${u.id}`, { method: 'DELETE' });
-        await Promise.all([loadUsers(), loadHouseholds()]);
+        await loadUsers();
       } catch (err) {
         showError(err.message);
       }
@@ -145,27 +126,22 @@ async function submitCreateUser(e) {
   el.adminError.hidden = true;
   el.adminSuccess.hidden = true;
 
-  const household = el.newUserHousehold.value.trim();
-  const username = el.newUserUsername.value.trim();
+  const email = el.newUserEmail.value.trim();
   const password = el.newUserPassword.value;
   const isAdmin = el.newUserIsAdmin.checked;
 
-  if (!household || !username || !password) {
-    showError('Household, username, and password are all required.');
+  if (!email || !password) {
+    showError('Email and password are both required.');
     return;
   }
 
   try {
-    await postJson('/api/admin/users', { household, username, password, isAdmin });
-    showSuccess(
-      `Created ${username} @ ${household}. Give them the household, username, and temporary password directly -- ` +
-        `they'll be forced to set a new one on first login.`
-    );
-    el.newUserHousehold.value = '';
-    el.newUserUsername.value = '';
+    await postJson('/api/admin/users', { email, password, isAdmin });
+    showSuccess(`Created ${email}. Give them the email and temporary password directly -- they'll be forced to set a new one on first login.`);
+    el.newUserEmail.value = '';
     el.newUserPassword.value = '';
     el.newUserIsAdmin.checked = false;
-    await Promise.all([loadUsers(), loadHouseholds()]);
+    await loadUsers();
   } catch (err) {
     showError(err.message);
   }
@@ -178,6 +154,7 @@ async function signOut() {
 
 el.createUserForm.addEventListener('submit', submitCreateUser);
 el.signOutBtn.addEventListener('click', signOut);
+el.usersSearch.addEventListener('input', renderUsers);
 
 (async function init() {
   let me;
@@ -195,6 +172,6 @@ el.signOutBtn.addEventListener('click', signOut);
     window.location.href = '/app.html';
     return;
   }
-  el.accountStatusText.textContent = `${me.username} @ ${me.household} (admin)`;
-  await Promise.all([loadHouseholds(), loadUsers()]);
+  el.accountStatusText.textContent = `${me.email} (admin)`;
+  await loadUsers();
 })();

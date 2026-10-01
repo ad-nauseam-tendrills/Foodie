@@ -10,7 +10,7 @@
   <header class="topbar">
     <h1>🍽️ Foodie</h1>
     <div id="accountBar" class="account-bar">
-      <span id="accountStatusText" class="household-status"></span>
+      <span id="accountStatusText" class="account-status"></span>
       <a id="adminLink" href="/admin.html" class="link-btn" hidden>Admin</a>
       <a id="changePasswordLink" href="/?changePassword=1" class="link-btn" hidden>Change password</a>
       <button id="signOutBtn" class="secondary" hidden>Sign out</button>
@@ -38,7 +38,7 @@
       <p id="savedExclusionsLine" class="saved-exclusions-line" hidden></p>
 
       <div class="actions">
-        <button id="saveBtn" class="secondary">Save exclusions to household</button>
+        <button id="saveBtn" class="secondary">Save exclusions</button>
         <button id="matchBtn" class="primary">What's for dinner?</button>
       </div>
     </section>
@@ -66,8 +66,11 @@
         </div>
 
         <div class="filter-field">
-          <label for="tagInput">Tag (e.g. Soup, Curry, Stew)</label>
-          <input id="tagInput" type="text" placeholder="type a tag…" autocomplete="off" list="tagOptions" />
+          <label for="tagInput">Tags (e.g. Soup, Curry, Stew)</label>
+          <div class="tag-input" id="filterTagInput">
+            <div class="tags" id="filterTags"></div>
+            <input id="tagInput" type="text" placeholder="type a tag, press Enter…" autocomplete="off" list="tagOptions" />
+          </div>
           <datalist id="tagOptions"></datalist>
         </div>
 
@@ -92,6 +95,18 @@
           </label>
           <button id="seasonalInfoBtn" type="button" class="link-btn">what's in season?</button>
         </div>
+
+        <div class="filter-field">
+          <label for="sortSelect">Sort by</label>
+          <select id="sortSelect">
+            <option value="match">Best match</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </div>
+
+        <div class="filter-field filter-field-checkbox">
+          <button id="clearFiltersBtn" type="button" class="link-btn">Clear all filters</button>
+        </div>
       </div>
       <div id="seasonalInfoBox" class="seasonal-info-box" hidden></div>
     </section>
@@ -106,7 +121,7 @@
 
     <section class="panel">
       <h2>Meal plan</h2>
-      <p class="muted">Add recipes below, then their ingredients combine into one grocery list. Synced to your household, like everything else here.</p>
+      <p class="muted">Add recipes below, then their ingredients combine into one grocery list.</p>
       <div id="plannedList" class="planned-list"></div>
       <p id="planEmptyState" class="empty-state">Nothing planned yet -- click "Add to plan" on a recipe.</p>
 
@@ -151,12 +166,9 @@
       <p id="restockEmpty" class="empty-state">Not enough usage history yet to suggest restocks.</p>
     </section>
 
-    <section class="panel" id="membersPanel" hidden>
-      <h2>Household members</h2>
-      <ul id="membersList" class="members-list"></ul>
-
-      <h3>Invite someone</h3>
-      <p class="muted">Generates a link that adds them to this household -- no email is sent by the app, copy it and send it yourself however you like.</p>
+    <section class="panel" id="invitePanel" hidden>
+      <h2>Invite someone</h2>
+      <p class="muted">Generates a link that lets someone create their own account -- no email is sent by the app, copy it and send it yourself however you like.</p>
       <div class="invite-generate-row">
         <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
         <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
@@ -168,23 +180,20 @@
       <ul id="pendingInvitesList" class="pending-invites-list"></ul>
     </section>
 
-    <section class="panel" id="browseHouseholdsPanel" hidden>
-      <h2>Browse other households</h2>
-      <p class="muted">Every signed-in user can see any household's data, read-only -- liked/disliked ingredients, meal plan, pantry (including prices), and members.</p>
-      <div class="household-switcher">
-        <select id="householdSelect"></select>
-        <button id="loadHouseholdBtn" class="secondary" type="button">View</button>
-      </div>
-      <div id="browseHouseholdResult" class="browse-household-result" hidden>
-        <h3 id="browseHouseholdTitle"></h3>
+    <section class="panel" id="browseUsersPanel" hidden>
+      <h2>Browse other users</h2>
+      <p class="muted">Every signed-in user can see any other user's data, read-only -- liked/disliked ingredients, meal plan, pantry (including prices), and cooking history.</p>
+      <input id="userSearchInput" type="search" class="search-input" placeholder="Search by email..." />
+      <ul id="userBrowseList" class="members-list"></ul>
+      <div id="browseUserResult" class="browse-user-result" hidden>
+        <h3 id="browseUserTitle"></h3>
+        <p id="browseUserCookStats" class="muted"></p>
         <p><strong>Likes:</strong> <span id="browseLiked" class="muted"></span></p>
         <p><strong>Avoids:</strong> <span id="browseDisliked" class="muted"></span></p>
         <p><strong>Meal plan:</strong> <span id="browsePlanned" class="muted"></span></p>
         <h4>Pantry</h4>
         <ul id="browsePantryList" class="pantry-inventory-list"></ul>
         <p id="browsePantryEmpty" class="empty-state">Nothing in their pantry.</p>
-        <h4>Members</h4>
-        <ul id="browseMembersList" class="members-list"></ul>
       </div>
     </section>
   </main>

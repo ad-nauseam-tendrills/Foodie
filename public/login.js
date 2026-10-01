@@ -2,13 +2,12 @@
 
 const el = {
   authForm: document.getElementById('authForm'),
-  authHousehold: document.getElementById('authHousehold'),
-  authUsername: document.getElementById('authUsername'),
+  authEmail: document.getElementById('authEmail'),
   authPassword: document.getElementById('authPassword'),
   authSubmitBtn: document.getElementById('authSubmitBtn'),
   inviteAcceptForm: document.getElementById('inviteAcceptForm'),
-  inviteHouseholdLabel: document.getElementById('inviteHouseholdLabel'),
-  inviteUsername: document.getElementById('inviteUsername'),
+  inviteNoteLabel: document.getElementById('inviteNoteLabel'),
+  inviteEmail: document.getElementById('inviteEmail'),
   invitePassword: document.getElementById('invitePassword'),
   inviteAcceptBtn: document.getElementById('inviteAcceptBtn'),
   inviteCancelBtn: document.getElementById('inviteCancelBtn'),
@@ -80,15 +79,14 @@ function showAuthForm() {
 async function submitAuth(e) {
   e.preventDefault();
   el.authError.hidden = true;
-  const household = el.authHousehold.value.trim();
-  const username = el.authUsername.value.trim();
+  const email = el.authEmail.value.trim();
   const password = el.authPassword.value;
-  if (!household || !username || !password) {
-    showError('Household, username, and password are all required.');
+  if (!email || !password) {
+    showError('Email and password are both required.');
     return;
   }
   try {
-    const data = await postJson('/api/auth/login', { household, username, password });
+    const data = await postJson('/api/auth/login', { email, password });
     if (data.mustChangePassword) {
       showChangePasswordForm({ forced: true, currentPassword: password });
     } else {
@@ -117,7 +115,7 @@ async function checkForInviteLink() {
     inviteToken = token;
     hideAllForms();
     el.inviteAcceptForm.hidden = false;
-    el.inviteHouseholdLabel.textContent = `Joining "${invite.household}" -- pick a username and password`;
+    el.inviteNoteLabel.textContent = invite.note ? `"${invite.note}" -- pick an email and password` : 'Pick an email and password to create your account';
     return true;
   } catch (err) {
     showError(`That invite link ${err.status === 410 ? 'is no longer valid' : "wasn't found"} (${err.message}).`);
@@ -135,14 +133,14 @@ function cancelInviteAccept() {
 async function submitAcceptInvite(e) {
   e.preventDefault();
   el.authError.hidden = true;
-  const username = el.inviteUsername.value.trim();
+  const email = el.inviteEmail.value.trim();
   const password = el.invitePassword.value;
-  if (!username || !password) {
-    showError('Username and password are both required.');
+  if (!email || !password) {
+    showError('Email and password are both required.');
     return;
   }
   try {
-    await postJson('/api/auth/accept-invite', { token: inviteToken, username, password });
+    await postJson('/api/auth/accept-invite', { token: inviteToken, email, password });
     clearInviteFromUrl();
     goToApp();
   } catch (err) {

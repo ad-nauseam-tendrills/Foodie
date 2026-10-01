@@ -55,10 +55,9 @@ const BANNED_WORD_PATTERNS = BANNED_WORDS.map((word) => ({ word, re: new RegExp(
 
 /**
  * @param {string} password
- * @param {{ username?: string, household?: string }} [context] -- also
- *   rejects the password if it's built around the account's own
- *   username/household name, the most common "guessable" case a generic
- *   wordlist can't catch.
+ * @param {{ email?: string }} [context] -- also rejects the password if
+ *   it's built around the account's own email/login identifier, the most
+ *   common "guessable" case a generic wordlist can't catch.
  * @returns {string|null} an error message, or null if the password passes.
  */
 function validatePassword(password, context = {}) {
@@ -83,18 +82,17 @@ function validatePassword(password, context = {}) {
       return `Password cannot contain the word "${word}" -- it's too common/guessable`;
     }
   }
-  for (const [label, value] of [
-    ['username', context.username],
-    ['household name', context.household],
-  ]) {
-    if (!value) continue;
-    // Check the whole value ("bustos east") and each individual word in
-    // it ("bustos", "east") -- a password containing just one word of a
-    // multi-word household name is exactly as guessable as the full
-    // phrase would be.
-    const candidates = [String(value), ...String(value).split(/\s+/)];
-    if (candidates.some((c) => c.length >= 3 && lower.includes(c.toLowerCase()))) {
-      return `Password cannot contain your ${label}`;
+  if (context.email) {
+    // Check the whole email and the local part before "@" (plus its
+    // dot/dash/underscore-separated pieces, e.g. "jane.doe@example.com"
+    // -> "jane", "doe") -- deliberately NOT the domain, since splitting
+    // that out would flag a password merely for containing "com" or
+    // "gmail", which are far too common to mean anything.
+    const email = String(context.email);
+    const localPart = email.includes('@') ? email.slice(0, email.indexOf('@')) : email;
+    const candidates = [email, localPart, ...localPart.split(/[.+_-]+/)];
+    if (candidates.some((c) => c.length >= 4 && lower.includes(c.toLowerCase()))) {
+      return 'Password cannot contain your email';
     }
   }
 

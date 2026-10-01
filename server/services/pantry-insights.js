@@ -9,22 +9,22 @@
 
 const { matchRecipes } = require('./matcher');
 
-function pantryIngredientNames(db, householdId) {
+function pantryIngredientNames(db, userId) {
   return db
     .prepare(
       `SELECT i.name AS name FROM pantry_items p
        JOIN ingredients i ON i.id = p.ingredient_id
-       WHERE p.household_id = ? AND (p.quantity IS NULL OR p.quantity > 0)`
+       WHERE p.user_id = ? AND (p.quantity IS NULL OR p.quantity > 0)`
     )
-    .all(householdId)
+    .all(userId)
     .map((r) => r.name);
 }
 
 /**
  * @returns {{ canMakeNow: Array, unlockSuggestions: Array }}
  */
-function pantryInsights(db, householdId) {
-  const pantryNames = pantryIngredientNames(db, householdId);
+function pantryInsights(db, userId) {
+  const pantryNames = pantryIngredientNames(db, userId);
   if (pantryNames.length === 0) {
     return { canMakeNow: [], unlockSuggestions: [] };
   }
@@ -54,26 +54,26 @@ function pantryInsights(db, householdId) {
 // Ingredients you've used more than once in the last ~2 months but don't
 // currently have -- worth restocking. Price/store come only from what
 // you've actually logged paying, never an external price API.
-function restockSuggestions(db, householdId) {
+function restockSuggestions(db, userId) {
   const usedRecently = db
     .prepare(
       `SELECT ue.ingredient_id AS ingredientId, ing.name AS name, COUNT(*) AS uses
        FROM usage_events ue
        JOIN ingredients ing ON ing.id = ue.ingredient_id
-       WHERE ue.household_id = ? AND ue.action = 'consumed'
+       WHERE ue.user_id = ? AND ue.action = 'consumed'
          AND ue.created_at >= datetime('now', '-60 days')
        GROUP BY ue.ingredient_id
        HAVING uses >= 2
        ORDER BY uses DESC`
     )
-    .all(householdId);
+    .all(userId);
 
   if (usedRecently.length === 0) return [];
 
-  const inPantry = new Set(pantryIngredientNames(db, householdId).map((n) => n.toLowerCase()));
+  const inPantry = new Set(pantryIngredientNames(db, userId).map((n) => n.toLowerCase()));
   const priceStmt = db.prepare(
     `SELECT price, store FROM usage_events
-     WHERE household_id = ? AND ingredient_id = ? AND action = 'purchased' AND price IS NOT NULL
+     WHERE user_id = ? AND ingredient_id = ? AND action = 'purchased' AND price IS NOT NULL
      ORDER BY created_at DESC LIMIT 10`
   );
 
@@ -81,7 +81,7 @@ function restockSuggestions(db, householdId) {
     .filter((r) => !inPantry.has(r.name.toLowerCase()))
     .slice(0, 10)
     .map((r) => {
-      const priceRows = priceStmt.all(householdId, r.ingredientId);
+      const priceRows = priceStmt.all(userId, r.ingredientId);
       const avgPrice = priceRows.length
         ? priceRows.reduce((sum, p) => sum + p.price, 0) / priceRows.length
         : null;

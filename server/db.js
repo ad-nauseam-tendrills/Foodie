@@ -17,6 +17,10 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, 'foodie.db');
 const db = new DatabaseSync(DB_PATH);
 
+// Fresh-install shape. On an existing database these CREATE TABLE
+// statements are no-ops (tables already exist, possibly with an older
+// column layout) -- migrateHouseholdsToUsers() below is what brings an
+// existing install's actual structure up to date.
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
@@ -46,35 +50,28 @@ db.exec(`
     PRIMARY KEY (recipe_id, ingredient_id)
   );
 
-  -- A "household" is just a shared name your devices point at so
-  -- preferences and cooked history sync between your phone/laptop.
-  -- No password, no third party -- it only exists in your own database.
-  CREATE TABLE IF NOT EXISTS households (
+  CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
+  CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_ingredient ON recipe_ingredients(ingredient_id);
+
+  -- Individual accounts -- no household layer. Each person's
+  -- liked/disliked ingredients, cooked history, meal plan, and favorites
+  -- are their own. "email" is just the login identifier people happen to
+  -- type their email address into -- there's no outbound mail capability
+  -- in this app, so it's never validated as a real address or used to
+  -- send anything.
+  CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    must_change_password INTEGER NOT NULL DEFAULT 0,
     liked_ingredients TEXT NOT NULL DEFAULT '[]',
     disliked_ingredients TEXT NOT NULL DEFAULT '[]',
     cooked_log TEXT NOT NULL DEFAULT '[]',
     planned_recipes TEXT NOT NULL DEFAULT '[]',
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
-  CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_ingredient ON recipe_ingredients(ingredient_id);
-
-  -- Real accounts (username + password) scoped to a household, so
-  -- multiple people can share one household's data while each keeping
-  -- their own login -- needed once the app is reachable outside your own
-  -- network, where a passwordless "type any household name" model would
-  -- let anyone read or edit anyone else's household.
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-    username TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    password_salt TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (household_id, username COLLATE NOCASE)
+    favorite_recipes TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -84,48 +81,43 @@ db.exec(`
     expires_at TEXT NOT NULL
   );
 
-  -- Structured pantry inventory -- what a household actually has on
-  -- hand, with quantity/unit/price/store, replacing the old flat
-  -- "pantry_ingredients" name list (still migrated in below).
+  -- Structured pantry inventory -- quantity/unit/price/store per
+  -- ingredient, owned directly by one account.
   CREATE TABLE IF NOT EXISTS pantry_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
     quantity REAL,
     unit TEXT,
     price_paid REAL,
     store TEXT,
-    added_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     purchased_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (household_id, ingredient_id)
+    UNIQUE (user_id, ingredient_id)
   );
 
   -- One row per pantry event (purchased / consumed / wasted) -- the raw
   -- log that usage metrics, restock suggestions, and per-ingredient price
-  -- history are all computed from, rather than trying to keep running
-  -- totals in sync by hand.
+  -- history are all computed from.
   CREATE TABLE IF NOT EXISTS usage_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE SET NULL,
     recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
-    action TEXT NOT NULL, -- 'purchased' | 'consumed' | 'wasted' | 'cooked'
+    action TEXT NOT NULL, -- 'purchased' | 'consumed' | 'wasted'
     quantity REAL,
     price REAL,
     store TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- Joining an *existing* household requires one of these -- signup only
-  -- creates a brand-new household. There's no email sending here; a link
-  -- built from the token is generated for a member to send however they
-  -- want (text, email, whatever).
+  -- Self-signup is disabled (see server/index.js); this is the other way
+  -- to get an account besides an admin creating one directly. A token is
+  -- a one-time credential, not tied to any resource beyond "create a new
+  -- account" -- there's no household to join anymore.
   CREATE TABLE IF NOT EXISTS invites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
     token TEXT NOT NULL UNIQUE,
     note TEXT,
     created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -134,19 +126,8 @@ db.exec(`
     used_at TEXT,
     used_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
   );
-
-  CREATE INDEX IF NOT EXISTS idx_users_household ON users(household_id);
-  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
-  CREATE INDEX IF NOT EXISTS idx_pantry_items_household ON pantry_items(household_id);
-  CREATE INDEX IF NOT EXISTS idx_usage_events_household ON usage_events(household_id);
-  CREATE INDEX IF NOT EXISTS idx_usage_events_ingredient ON usage_events(household_id, ingredient_id);
-  CREATE INDEX IF NOT EXISTS idx_invites_household ON invites(household_id);
 `);
 
-// Migrations for databases created before these columns existed --
-// CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so an
-// already-seeded database needs each column added explicitly.
 function addColumnIfMissing(table, column, definition) {
   const exists = db
     .prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`)
@@ -157,11 +138,212 @@ function addColumnIfMissing(table, column, definition) {
 }
 
 addColumnIfMissing('recipes', 'tags', 'TEXT');
-addColumnIfMissing('households', 'planned_recipes', `TEXT NOT NULL DEFAULT '[]'`);
-addColumnIfMissing('households', 'pantry_ingredients', `TEXT NOT NULL DEFAULT '[]'`);
-addColumnIfMissing('users', 'is_admin', `INTEGER NOT NULL DEFAULT 0`);
-addColumnIfMissing('users', 'must_change_password', `INTEGER NOT NULL DEFAULT 0`);
-addColumnIfMissing('households', 'favorite_recipes', `TEXT NOT NULL DEFAULT '[]'`);
+
+// One-time, irreversible structural migration: households used to own
+// shared liked/disliked/cooked-log/plan/favorites/pantry, with users
+// scoped underneath them; now each account owns all of that directly.
+// Rebuilt via the standard SQLite "create new table, copy data, swap in"
+// pattern rather than surgical ALTERs, since this touches primary keys,
+// foreign keys, and unique constraints across four tables at once --
+// much easier to reason about and test as one atomic transaction than as
+// a sequence of in-place renames/drops.
+function migrateHouseholdsToUsers() {
+  const householdsTableExists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'households'`)
+    .get();
+  if (!householdsTableExists) return; // fresh install, or already migrated
+
+  const usersHasHouseholdId = db
+    .prepare(`SELECT 1 FROM pragma_table_info('users') WHERE name = 'household_id'`)
+    .get();
+  if (!usersHasHouseholdId) {
+    // households exists but users is already in the new shape -- an
+    // interrupted previous run got far enough to swap users in but not
+    // to drop households. Nothing left to copy; just finish cleaning up.
+    db.exec(`DROP TABLE households`);
+    return;
+  }
+
+  console.log('[migrate] Removing the household model -- moving data to individual accounts...');
+
+  // PRAGMA foreign_keys can't be changed inside a transaction, and this
+  // migration needs it off: dropping `users` while `sessions`,
+  // `pantry_items`, etc. still hold old-shape foreign keys into it would
+  // otherwise fail the moment any row is touched.
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    const households = db.prepare(`SELECT * FROM households`).all();
+    const householdsById = new Map(households.map((h) => [h.id, h]));
+    const oldUsers = db.prepare(`SELECT * FROM users ORDER BY id`).all();
+    const oldPantryItems = db.prepare(`SELECT * FROM pantry_items`).all();
+
+    db.exec(`
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        is_admin INTEGER NOT NULL DEFAULT 0,
+        must_change_password INTEGER NOT NULL DEFAULT 0,
+        liked_ingredients TEXT NOT NULL DEFAULT '[]',
+        disliked_ingredients TEXT NOT NULL DEFAULT '[]',
+        cooked_log TEXT NOT NULL DEFAULT '[]',
+        planned_recipes TEXT NOT NULL DEFAULT '[]',
+        favorite_recipes TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+
+    const insertUser = db.prepare(`
+      INSERT INTO users_new (id, email, password_hash, password_salt, is_admin, must_change_password,
+        liked_ingredients, disliked_ingredients, cooked_log, planned_recipes, favorite_recipes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const emailsUsed = new Set();
+    for (const u of oldUsers) {
+      const household = householdsById.get(u.household_id);
+      // Usernames used to only need to be unique within a household --
+      // flattened to one global namespace, two people both named
+      // "admin" in different households would collide. Disambiguate
+      // rather than silently dropping/overwriting an account; this is
+      // rare enough that a visible, slightly ugly fallback is fine.
+      let email = u.username;
+      if (emailsUsed.has(email.toLowerCase())) {
+        const disambiguated = `${u.username}-${u.id}`;
+        console.warn(`[migrate] "${u.username}" already taken after flattening households -- using "${disambiguated}" instead`);
+        email = disambiguated;
+      }
+      emailsUsed.add(email.toLowerCase());
+
+      insertUser.run(
+        u.id,
+        email,
+        u.password_hash,
+        u.password_salt,
+        u.is_admin,
+        u.must_change_password,
+        household ? household.liked_ingredients : '[]',
+        household ? household.disliked_ingredients : '[]',
+        household ? household.cooked_log : '[]',
+        household ? household.planned_recipes : '[]',
+        household && household.favorite_recipes ? household.favorite_recipes : '[]',
+        u.created_at
+      );
+    }
+
+    // Households with 2+ members had one shared pantry/preferences --
+    // there's no way to know who "owns" what within that, so everyone
+    // who was in it starts with their own identical copy. They diverge
+    // from there; nobody loses data.
+    const userIdsByHousehold = new Map();
+    for (const u of oldUsers) {
+      if (!userIdsByHousehold.has(u.household_id)) userIdsByHousehold.set(u.household_id, []);
+      userIdsByHousehold.get(u.household_id).push(u.id);
+    }
+
+    db.exec(`
+      CREATE TABLE pantry_items_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+        quantity REAL,
+        unit TEXT,
+        price_paid REAL,
+        store TEXT,
+        purchased_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (user_id, ingredient_id)
+      );
+    `);
+    const insertPantryItem = db.prepare(`
+      INSERT INTO pantry_items_new
+        (user_id, ingredient_id, quantity, unit, price_paid, store, purchased_at, expires_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const p of oldPantryItems) {
+      const memberIds = userIdsByHousehold.get(p.household_id) || [];
+      for (const userId of memberIds) {
+        insertPantryItem.run(userId, p.ingredient_id, p.quantity, p.unit, p.price_paid, p.store, p.purchased_at, p.expires_at, p.updated_at);
+      }
+    }
+
+    // usage_events already tracks who acted (user_id) separately from
+    // whose pantry it was (household_id) -- now that pantry is personal,
+    // those are the same thing, so just drop household_id and keep the
+    // rest untouched.
+    db.exec(`
+      CREATE TABLE usage_events_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE SET NULL,
+        recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
+        action TEXT NOT NULL,
+        quantity REAL,
+        price REAL,
+        store TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    db.exec(`
+      INSERT INTO usage_events_new (id, user_id, ingredient_id, recipe_id, action, quantity, price, store, created_at)
+      SELECT id, user_id, ingredient_id, recipe_id, action, quantity, price, store, created_at FROM usage_events
+    `);
+
+    // invites: drop household_id, everything else (token, note, who
+    // created/used it, expiry) carries over unchanged -- still valid
+    // ways to create a new account, just not tied to a household anymore.
+    db.exec(`
+      CREATE TABLE invites_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token TEXT NOT NULL UNIQUE,
+        note TEXT,
+        created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        used_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+    db.exec(`
+      INSERT INTO invites_new (id, token, note, created_by_user_id, created_at, expires_at, used_at, used_by_user_id)
+      SELECT id, token, note, created_by_user_id, created_at, expires_at, used_at, used_by_user_id FROM invites
+    `);
+
+    db.exec(`DROP TABLE users`);
+    db.exec(`ALTER TABLE users_new RENAME TO users`);
+    db.exec(`DROP TABLE pantry_items`);
+    db.exec(`ALTER TABLE pantry_items_new RENAME TO pantry_items`);
+    db.exec(`DROP TABLE usage_events`);
+    db.exec(`ALTER TABLE usage_events_new RENAME TO usage_events`);
+    db.exec(`DROP TABLE invites`);
+    db.exec(`ALTER TABLE invites_new RENAME TO invites`);
+    db.exec(`DROP TABLE households`);
+
+    db.exec('COMMIT');
+    console.log(`[migrate] Done -- ${oldUsers.length} account(s) moved off the household model.`);
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+migrateHouseholdsToUsers();
+
+// Safe to run unconditionally regardless of which path (fresh install vs.
+// migrated) created these tables.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_pantry_items_user ON pantry_items(user_id);
+  CREATE INDEX IF NOT EXISTS idx_usage_events_user ON usage_events(user_id);
+  CREATE INDEX IF NOT EXISTS idx_usage_events_ingredient ON usage_events(user_id, ingredient_id);
+  CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by_user_id);
+`);
 
 // Merges ingredient rows that are really the same thing under different
 // spellings (see server/data/ingredient-aliases.js), for databases that
@@ -259,45 +441,6 @@ function mergeDuplicateIngredients() {
 
 mergeDuplicateIngredients();
 
-// One-time migration: the pantry used to be a flat JSON array of names
-// on the household row (`pantry_ingredients`); it's now the structured
-// `pantry_items` table (quantity/unit/price/store per ingredient).
-// Convert any leftover legacy data into real rows, then clear the old
-// column so this doesn't re-add something a member deliberately removed
-// from the new table on a later startup.
-function migrateLegacyPantry() {
-  const rows = db
-    .prepare(`SELECT id, pantry_ingredients FROM households WHERE pantry_ingredients IS NOT NULL AND pantry_ingredients != '[]'`)
-    .all();
-  if (!rows.length) return;
-
-  const insertIngredient = db.prepare(`INSERT OR IGNORE INTO ingredients (name) VALUES (?)`);
-  const getIngredientId = db.prepare(`SELECT id FROM ingredients WHERE name = ? COLLATE NOCASE`);
-  const insertPantryItem = db.prepare(
-    `INSERT OR IGNORE INTO pantry_items (household_id, ingredient_id) VALUES (?, ?)`
-  );
-  const clearLegacy = db.prepare(`UPDATE households SET pantry_ingredients = '[]' WHERE id = ?`);
-
-  for (const row of rows) {
-    let names;
-    try {
-      names = JSON.parse(row.pantry_ingredients);
-    } catch {
-      names = [];
-    }
-    for (const raw of names) {
-      const clean = canonicalizeIngredientName(raw);
-      if (!clean) continue;
-      insertIngredient.run(clean);
-      const ingredient = getIngredientId.get(clean);
-      if (ingredient) insertPantryItem.run(row.id, ingredient.id);
-    }
-    clearLegacy.run(row.id);
-  }
-}
-
-migrateLegacyPantry();
-
 // First-ever boot needs *someone* who can sign in to provision the rest
 // of the accounts -- there's no email flow, so it can't be "check your
 // inbox." Instead: if no admin exists yet, create one with a random
@@ -307,26 +450,18 @@ migrateLegacyPantry();
 function bootstrapAdmin() {
   if (db.prepare(`SELECT 1 FROM users WHERE is_admin = 1`).get()) return;
 
-  let householdName = 'Admin';
-  if (db.prepare(`SELECT 1 FROM households WHERE name = ? COLLATE NOCASE`).get(householdName)) {
-    householdName = `Admin-${crypto.randomBytes(3).toString('hex')}`;
-  }
-  db.prepare(`INSERT INTO households (name) VALUES (?)`).run(householdName);
-  const household = db.prepare(`SELECT id FROM households WHERE name = ? COLLATE NOCASE`).get(householdName);
-
+  const email = 'admin';
   const password = crypto.randomBytes(15).toString('base64url'); // 20 chars -- comfortably past the 14-char minimum
   const { salt, hash } = hashPassword(password);
   db.prepare(
-    `INSERT INTO users (household_id, username, password_hash, password_salt, is_admin, must_change_password)
-     VALUES (?, 'admin', ?, ?, 1, 1)`
-  ).run(household.id, hash, salt);
+    `INSERT INTO users (email, password_hash, password_salt, is_admin, must_change_password) VALUES (?, ?, ?, 1, 1)`
+  ).run(email, hash, salt);
 
   const passwordFile = path.join(DATA_DIR, 'ADMIN_INITIAL_PASSWORD.txt');
   const message =
     `\n==============================================================\n` +
     `Foodie: created the initial admin account\n` +
-    `  Household: ${householdName}\n` +
-    `  Username:  admin\n` +
+    `  Email:     ${email}\n` +
     `  Password:  ${password}\n` +
     `You'll be required to set a new password on first login.\n` +
     `This is also saved to: ${passwordFile}\n` +

@@ -10,7 +10,7 @@
   <header class="topbar">
     <h1>🍽️ Foodie admin</h1>
     <div class="account-bar">
-      <span id="accountStatusText" class="household-status"></span>
+      <span id="accountStatusText" class="account-status"></span>
       <a href="/app.html" class="link-btn">Back to app</a>
       <button id="signOutBtn" class="secondary">Sign out</button>
     </div>
@@ -24,12 +24,8 @@
         change it the first time they sign in.
       </p>
       <form id="createUserForm" class="stacked-form">
-        <label for="newUserHousehold">Household</label>
-        <input id="newUserHousehold" type="text" list="householdOptions" autocomplete="off" placeholder="existing name, or a new one" />
-        <datalist id="householdOptions"></datalist>
-
-        <label for="newUserUsername">Username</label>
-        <input id="newUserUsername" type="text" autocomplete="off" />
+        <label for="newUserEmail">Email</label>
+        <input id="newUserEmail" type="text" autocomplete="off" />
 
         <label for="newUserPassword">Temporary password</label>
         <input id="newUserPassword" type="text" autocomplete="off" />
@@ -44,12 +40,8 @@
     </section>
 
     <section class="panel">
-      <h2>Households</h2>
-      <ul id="householdsList" class="admin-list"></ul>
-    </section>
-
-    <section class="panel">
       <h2>Users</h2>
+      <input id="usersSearch" type="search" class="search-input" placeholder="Search by email..." />
       <ul id="usersList" class="admin-list"></ul>
     </section>
   </main>

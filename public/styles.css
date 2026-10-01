@@ -49,8 +49,7 @@ body {
   flex-wrap: wrap;
 }
 
-.household-status { font-size: 0.85rem; color: var(--muted); }
-.household-status.warn { color: var(--bad); font-weight: 600; }
+.account-status { font-size: 0.85rem; color: var(--muted); }
 
 main {
   max-width: 900px;
@@ -554,6 +553,26 @@ footer a { color: var(--accent); }
   padding: 0.6rem 0.85rem;
 }
 
+.member-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.member-item button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.member-item button:hover { border-color: var(--accent); color: var(--accent); }
+
 .unlock-item strong,
 .restock-item strong,
 .member-item strong { font-size: 0.95rem; }
@@ -744,26 +763,20 @@ footer a { color: var(--accent); }
 
 .admin-list-item button:hover { border-color: var(--bad); color: var(--bad); }
 
-/* ---------- Browse other households ---------- */
+/* ---------- Browse other users ---------- */
 
-.household-switcher {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.household-switcher select {
+.search-input {
   font: inherit;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
-  flex: 1;
-  max-width: 260px;
+  width: 100%;
+  max-width: 320px;
+  margin-bottom: 0.75rem;
 }
 
-.browse-household-result h3 { margin-bottom: 0.25rem; }
-.browse-household-result h4 { margin: 1rem 0 0.4rem; font-size: 0.9rem; }
+.browse-user-result h3 { margin-bottom: 0.25rem; }
+.browse-user-result h4 { margin: 1rem 0 0.4rem; font-size: 0.9rem; }
 
 .favorite-btn {
   align-self: flex-start;
