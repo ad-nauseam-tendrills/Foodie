@@ -7,9 +7,8 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 const fs = require('node:fs');
-const crypto = require('node:crypto');
 const { canonicalizeIngredientName } = require('./data/ingredient-aliases');
-const { hashPassword } = require('./services/auth');
+const { hashPassword, generateTempPassword } = require('./services/auth');
 
 const DATA_DIR = process.env.FOODIE_DATA_DIR || path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -125,6 +124,20 @@ db.exec(`
     expires_at TEXT NOT NULL,
     used_at TEXT,
     used_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+  );
+
+  -- Caches barcode -> product name lookups against Open Food Facts (free,
+  -- no API key) so re-scanning the same product later never needs another
+  -- outbound call -- once a barcode's product name is known, it's known
+  -- for good. "found = 0" rows are cached too (briefly re-checked, see
+  -- server/index.js) so repeatedly scanning something not in that
+  -- database doesn't hammer it either.
+  CREATE TABLE IF NOT EXISTS barcode_cache (
+    upc TEXT PRIMARY KEY,
+    found INTEGER NOT NULL,
+    name TEXT,
+    brand TEXT,
+    looked_up_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
 
@@ -451,7 +464,7 @@ function bootstrapAdmin() {
   if (db.prepare(`SELECT 1 FROM users WHERE is_admin = 1`).get()) return;
 
   const email = 'admin';
-  const password = crypto.randomBytes(15).toString('base64url'); // 20 chars -- comfortably past the 14-char minimum
+  const password = generateTempPassword();
   const { salt, hash } = hashPassword(password);
   db.prepare(
     `INSERT INTO users (email, password_hash, password_salt, is_admin, must_change_password) VALUES (?, ?, ?, 1, 1)`

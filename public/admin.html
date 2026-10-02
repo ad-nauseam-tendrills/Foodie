@@ -41,7 +41,23 @@
 
     <section class="panel">
       <h2>Users</h2>
-      <input id="usersSearch" type="search" class="search-input" placeholder="Search by email..." />
+      <p id="usersStats" class="muted"></p>
+
+      <div class="admin-filter-row">
+        <input id="usersSearch" type="search" class="search-input" placeholder="Search by email..." />
+        <div class="filter-chips" id="usersFilterChips">
+          <button type="button" class="filter-chip active" data-filter="all">All</button>
+          <button type="button" class="filter-chip" data-filter="admins">Admins</button>
+          <button type="button" class="filter-chip" data-filter="pending">Must change password</button>
+        </div>
+      </div>
+
+      <div id="bulkActionBar" class="bulk-action-bar" hidden>
+        <span id="bulkSelectedCount"></span>
+        <button id="bulkDeleteBtn" type="button" class="danger">Delete selected</button>
+        <button id="bulkClearBtn" type="button" class="link-btn">Clear selection</button>
+      </div>
+
       <ul id="usersList" class="admin-list"></ul>
     </section>
   </main>

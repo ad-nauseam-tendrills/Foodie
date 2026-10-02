@@ -348,6 +348,9 @@ button.primary:hover { background: var(--accent-hover); }
 button.secondary { background: transparent; border-color: var(--border); color: var(--text); }
 button.secondary:hover { border-color: var(--accent); color: var(--accent); }
 
+button.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
+button.danger:hover { background: var(--bad); color: #fff; }
+
 .results-header {
   display: flex;
   align-items: baseline;
@@ -457,6 +460,41 @@ button.secondary:hover { border-color: var(--accent); color: var(--accent); }
 
 .ingredient-list { columns: 2; column-gap: 1.5rem; margin: 0.5rem 0 1rem; padding-left: 1.1rem; }
 .ingredient-list li.missing { color: var(--bad); }
+
+/* ---------- Barcode scanner ---------- */
+
+.scanner-modal { max-width: 420px; }
+.scanner-modal h3 { margin-top: 0; }
+
+.scanner-camera-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+
+.scanner-camera-wrap video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scanner-manual-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.scanner-manual-row input {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  flex: 1;
+}
 
 .instructions { white-space: pre-line; line-height: 1.5; }
 
@@ -737,7 +775,17 @@ footer a { color: var(--accent); }
   font-size: 0.85rem;
 }
 
-.admin-list-item .admin-badges { display: flex; gap: 0.35rem; }
+.admin-list-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-list-item-detail { font-size: 0.72rem; color: var(--muted); }
+
+.admin-list-item .admin-badges { display: flex; gap: 0.35rem; flex-shrink: 0; }
 
 .admin-badge {
   font-size: 0.7rem;
@@ -759,9 +807,63 @@ footer a { color: var(--accent); }
   font-size: 0.72rem;
   color: var(--muted);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
-.admin-list-item button:hover { border-color: var(--bad); color: var(--bad); }
+.admin-list-item button:hover { border-color: var(--accent); color: var(--accent); }
+.admin-list-item button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.admin-list-item button.primary:hover { opacity: 0.9; color: #fff; }
+.admin-list-item button.danger { border-color: var(--bad); color: var(--bad); }
+.admin-list-item button.danger:hover { background: var(--bad); color: #fff; }
+
+.admin-list-item-editing { flex-wrap: wrap; }
+.admin-edit-email {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  flex: 1;
+  min-width: 160px;
+}
+
+.admin-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.admin-filter-row .search-input { margin-bottom: 0; }
+
+.filter-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+.filter-chip {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  background: #f7ece0;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
 
 /* ---------- Browse other users ---------- */
 

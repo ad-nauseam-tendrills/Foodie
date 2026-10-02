@@ -12,6 +12,7 @@ const {
   hashPassword,
   verifyPassword,
   createToken,
+  generateTempPassword,
   tokenExpiryIso,
   inviteExpiryIso,
   validatePassword,
@@ -413,17 +414,55 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Edit an account's email and/or admin status -- the cleanup counterpart
+// to creating one: fixing a typo'd email, promoting/demoting someone, or
+// both at once. Guards against an admin locking themselves out by
+// removing their own access with nobody else around to undo it.
+app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const updates = [];
+  const params = [];
+
+  if (req.body && req.body.email !== undefined) {
+    const email = String(req.body.email).trim();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Email is required' });
+    const collision = db.prepare(`SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id != ?`).get(email, target.id);
+    if (collision) return res.status(409).json({ error: 'That email is already registered' });
+    updates.push('email = ?');
+    params.push(email);
+  }
+
+  if (req.body && req.body.isAdmin !== undefined) {
+    const isAdmin = !!req.body.isAdmin;
+    if (!isAdmin && target.id === req.user.id) {
+      return res.status(400).json({ error: "Can't remove your own admin access" });
+    }
+    updates.push('is_admin = ?');
+    params.push(isAdmin ? 1 : 0);
+  }
+
+  if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params, target.id);
+  res.json({ ok: true });
+});
+
 // There's no self-service "forgot password" (no email to send a link
 // through) -- this is the fallback: an admin sets a new temporary
 // password directly, and the account is forced to change it again on
 // next login, same as a freshly-created one. Also invalidates every
 // existing session for that account, since the old password (and
-// whoever had it) shouldn't still be able to act as them.
+// whoever had it) shouldn't still be able to act as them. Omitting
+// `password` generates a random one and returns it, for "just get them
+// into a working state" without having to compose a password by hand.
 app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
   const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
   if (!target) return res.status(404).json({ error: 'User not found' });
 
-  const password = String((req.body && req.body.password) || '');
+  const providedPassword = req.body && req.body.password ? String(req.body.password) : '';
+  const password = providedPassword || generateTempPassword();
   const passwordError = validatePassword(password, { email: target.email });
   if (passwordError) return res.status(400).json({ error: passwordError });
 
@@ -435,7 +474,7 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
   );
   db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(target.id);
 
-  res.json({ ok: true });
+  res.json({ ok: true, password: providedPassword ? undefined : password });
 });
 
 // --- Ingredients (autocomplete) ---------------------------------------
@@ -449,6 +488,64 @@ app.get('/api/ingredients', requireAuth, (req, res) => {
     ? db.prepare(`SELECT name FROM ingredients WHERE name LIKE ? ORDER BY name LIMIT 25`).all(`%${q}%`)
     : db.prepare(`SELECT name FROM ingredients ORDER BY name LIMIT 100`).all();
   res.json(rows.map((r) => r.name));
+});
+
+// --- Barcode lookup -----------------------------------------------------
+//
+// Scanning a packaged product's barcode (from the Pantry panel) resolves
+// it to a name via Open Food Facts (openfoodfacts.org) -- free, no API
+// key, no account. Only reachable once ever per barcode, after which
+// barcode_cache answers forever: a UPC's product doesn't change, so
+// there's no reason to ask again. This is the one place this app makes
+// an outbound call after initial recipe seeding, and it's opt-in (only
+// happens when someone scans something) rather than a background sync.
+
+const BARCODE_RE = /^\d{6,14}$/;
+const BARCODE_NOT_FOUND_RECHECK_MS = 7 * 24 * 60 * 60 * 1000; // give a newly-catalogued product a week to show up
+
+function cacheRowIsFresh(row) {
+  if (!row) return false;
+  if (row.found) return true; // a found product's name doesn't change
+  const age = Date.now() - new Date(row.looked_up_at.replace(' ', 'T') + 'Z').getTime();
+  return age < BARCODE_NOT_FOUND_RECHECK_MS;
+}
+
+app.get('/api/barcode/:upc', requireAuth, async (req, res) => {
+  const upc = String(req.params.upc || '').trim();
+  if (!BARCODE_RE.test(upc)) return res.status(400).json({ error: 'Not a valid barcode' });
+
+  const cached = db.prepare(`SELECT * FROM barcode_cache WHERE upc = ?`).get(upc);
+  if (cacheRowIsFresh(cached)) {
+    if (!cached.found) return res.status(404).json({ error: 'No product found for that barcode' });
+    return res.json({ name: cached.name, brand: cached.brand });
+  }
+
+  let body;
+  try {
+    const response = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(upc)}.json?fields=product_name,brands`,
+      { headers: { 'User-Agent': 'Foodie/1.0 (self-hosted recipe app)' } }
+    );
+    if (!response.ok) throw new Error(`Open Food Facts returned HTTP ${response.status}`);
+    body = await response.json();
+  } catch (err) {
+    console.warn(`[barcode] lookup failed for ${upc}: ${err.message}`);
+    return res
+      .status(502)
+      .json({ error: "Couldn't reach the barcode lookup service -- try again, or type the ingredient in by hand" });
+  }
+
+  const product = body && body.status === 1 ? body.product : null;
+  const name = product && product.product_name ? String(product.product_name).trim() : null;
+  const brand = product && product.brands ? String(product.brands).split(',')[0].trim() : null;
+
+  db.prepare(
+    `INSERT INTO barcode_cache (upc, found, name, brand, looked_up_at) VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(upc) DO UPDATE SET found = excluded.found, name = excluded.name, brand = excluded.brand, looked_up_at = excluded.looked_up_at`
+  ).run(upc, name ? 1 : 0, name, brand);
+
+  if (!name) return res.status(404).json({ error: 'No product found for that barcode' });
+  res.json({ name, brand });
 });
 
 // --- Recipes -------------------------------------------------------------

@@ -115,6 +115,15 @@ function createToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// Used anywhere the server needs to hand someone a password instead of
+// them choosing one: first-boot admin bootstrap, an admin resetting a
+// user without typing a specific replacement, and the CLI reset script.
+// 20 chars of base64url is comfortably past MIN_PASSWORD_LENGTH and
+// doesn't trip the repeated-character/banned-word checks in practice.
+function generateTempPassword() {
+  return crypto.randomBytes(15).toString('base64url');
+}
+
 function tokenExpiryIso() {
   return new Date(Date.now() + SESSION_TTL_MS).toISOString();
 }
@@ -156,6 +165,7 @@ module.exports = {
   hashPassword,
   verifyPassword,
   createToken,
+  generateTempPassword,
   tokenExpiryIso,
   inviteExpiryIso,
   validatePassword,

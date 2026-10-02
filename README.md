@@ -339,14 +339,28 @@ user), an admin can create an account directly with a temporary password
 they set themselves, no invite link needed -- forced to change it on
 first login, same as any admin-created account. This is the direct
 alternative to the invite-link flow: useful when you'd rather hand
-someone a password yourself than send them a link. An admin can also
-**reset an existing user's password** the same way -- there's no
-self-service "forgot password" (no email to send a reset link through),
-so this is the fallback when someone's locked out. A reset invalidates
-every existing session for that account, same as a stolen-password
-precaution. The Admin panel's user list has a search box, since every
-account on the server is listed there flat (no household grouping to
-narrow it for you anymore).
+someone a password yourself than send them a link.
+
+The Admin panel is built for day-to-day cleanup, not just creation:
+- A stats line (total users, admins, pending password changes) plus
+  filter chips (All / Admins / Must change password) and a search box
+  over every account's email, since there's no household grouping to
+  narrow the list for you anymore -- everything's listed flat.
+- **Edit** an account inline -- fix a typo'd email, or promote/demote
+  admin status -- without recreating it. An admin can't remove their
+  own admin access this way (or delete their own account): the server
+  rejects it, so there's no way to lock yourself out with nobody left
+  to undo it.
+- **Reset a password** two ways: "generate new password" picks a random
+  one and shows it once, right in the panel, with nothing to type;
+  "set password" lets you choose a specific one, checked against the
+  same policy as everywhere else. There's no self-service "forgot
+  password" (no email to send a reset link through), so this is the
+  fallback when someone's locked out. Either way, every existing session
+  for that account is killed, same as a stolen-password precaution.
+- **Bulk delete** -- select any number of accounts with the checkboxes
+  and delete them all at once, for clearing out a batch of junk/test
+  accounts in one confirmation instead of one at a time.
 
 **Locked out of every admin account** (the in-app reset needs an admin
 session to use it, so it can't help if there isn't one)? Reset a
@@ -437,6 +451,27 @@ if you're tracking a quantity for it -- there's no structured "2 cups"
 parsing to decrement precisely by, so this is an approximation, not a
 real running count.
 
+**Barcode scanning**: the "📷 Scan barcode" button on the Pantry panel
+opens the camera and decodes a packaged product's barcode using the
+browser's native `BarcodeDetector` API -- no JS library to ship, no
+server-side image processing. It resolves to a product name via
+[Open Food Facts](https://world.openfoodfacts.org/) (free, open, no API
+key or account) and drops that name into the ingredient field for you to
+edit or confirm before it's actually added -- same "never trust a guess
+blindly" principle planned for receipt scanning (below). A barcode's
+result is cached forever once found (a UPC's product doesn't change,
+so there's no reason to ask Open Food Facts twice), and "not found" is
+cached too, briefly, so repeatedly scanning something not in that
+database doesn't hammer it. `BarcodeDetector` isn't available in every
+browser (notably not Safari/iOS as of writing) -- when it isn't, or the
+camera can't be reached, the same dialog falls back to a plain text
+field for typing the barcode number in by hand, which works everywhere
+and is also just faster when a label's barcode is damaged or glare makes
+it hard to scan. Camera access needs HTTPS (or `localhost`) per browser
+security rules -- another reason to put this behind the nginx/Caddy
+setup from the deployment section rather than running it over plain
+HTTP.
+
 From that inventory, three panels answer the actual questions a pantry
 raises, computed with the same ingredient-overlap matching as search
 (no AI):
@@ -466,6 +501,7 @@ another one.
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/ingredients?q=` | Autocomplete over known ingredient names -- requires sign-in |
+| `GET /api/barcode/:upc` | Look up a scanned/typed barcode via Open Food Facts, cached permanently once found (404 if no match -- see "Barcode scanning" below) |
 | `GET /api/categories` | Distinct recipe categories -- requires sign-in |
 | `GET /api/areas` | Distinct cuisines/regions -- requires sign-in |
 | `GET /api/tags` | Distinct recipe tags -- requires sign-in |
@@ -505,7 +541,8 @@ another one.
 | `GET /api/me/pantry/restock-suggestions` | Frequently-used ingredients you're out of, with your own price history |
 | `GET /api/admin/users` | Admin only: every account on the server |
 | `POST /api/admin/users` | Admin only: create a user directly (`{email, password, isAdmin?}`) -- always must-change-password |
-| `POST /api/admin/users/:id/reset-password` | Admin only: set a new temporary password for an existing user (`{password}`) -- forces must-change-password, kills their existing sessions |
+| `PATCH /api/admin/users/:id` | Admin only: edit `{email?, isAdmin?}` -- rejects removing your own admin access |
+| `POST /api/admin/users/:id/reset-password` | Admin only: set a new password for an existing user (`{password}`), or omit `password` to get one generated and returned in the response -- forces must-change-password, kills their existing sessions |
 | `DELETE /api/admin/users/:id` | Admin only: delete a user (not yourself) |
 
 ## Roadmap / ideas not built yet
@@ -523,10 +560,11 @@ another one.
   fast rather than browsing.
 - **Time/effort as a filter** (15-minutes/one-pan vs. a slow weekend
   meal) — often the real constraint, not just ingredients.
-- **Receipt scanning into the pantry** — photograph a receipt and have
-  its line items land in pantry inventory automatically, instead of
-  typing each one in. The hard part isn't OCR, it's mapping "ORG MILK
-  1GAL WEGMANS" to the ingredient "Milk" — planned approach is OCR
+- **Receipt scanning into the pantry** — photograph a whole receipt and
+  have every line item land in pantry inventory at once, instead of
+  typing each one in or scanning barcodes one at a time (built — see
+  "Barcode scanning" above). The hard part isn't OCR, it's mapping "ORG
+  MILK 1GAL WEGMANS" to the ingredient "Milk" — planned approach is OCR
   (likely Tesseract.js, no external API) to pull raw line items, then
   fuzzy-match each one against known ingredients and let you confirm or
   correct the match before it's added, rather than trusting a guess

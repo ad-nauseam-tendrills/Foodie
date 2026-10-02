@@ -12,9 +12,8 @@
 // forced to change it again on next login, and every existing session
 // for it is killed, same as the in-app admin reset.
 
-const crypto = require('node:crypto');
 const db = require('../db');
-const { hashPassword, validatePassword } = require('../services/auth');
+const { hashPassword, validatePassword, generateTempPassword } = require('../services/auth');
 
 function fail(message) {
   console.error(message);
@@ -47,7 +46,7 @@ if (password) {
   const passwordError = validatePassword(password, { email: user.email });
   if (passwordError) fail(`That password won't work: ${passwordError}`);
 } else {
-  password = crypto.randomBytes(15).toString('base64url'); // 20 chars, comfortably past the 14-char minimum
+  password = generateTempPassword();
 }
 
 const { salt, hash } = hashPassword(password);

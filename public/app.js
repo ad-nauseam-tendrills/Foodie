@@ -60,8 +60,16 @@ const el = {
   pantryPrice: document.getElementById('pantryPrice'),
   pantryStore: document.getElementById('pantryStore'),
   pantryAddBtn: document.getElementById('pantryAddBtn'),
+  pantryScanBtn: document.getElementById('pantryScanBtn'),
   pantryInventoryList: document.getElementById('pantryInventoryList'),
   pantryEmptyState: document.getElementById('pantryEmptyState'),
+  scannerOverlay: document.getElementById('scannerOverlay'),
+  scannerClose: document.getElementById('scannerClose'),
+  scannerCameraWrap: document.getElementById('scannerCameraWrap'),
+  scannerVideo: document.getElementById('scannerVideo'),
+  scannerStatus: document.getElementById('scannerStatus'),
+  scannerManualInput: document.getElementById('scannerManualInput'),
+  scannerManualBtn: document.getElementById('scannerManualBtn'),
   insightsPanel: document.getElementById('insightsPanel'),
   canMakeNowList: document.getElementById('canMakeNowList'),
   canMakeNowEmpty: document.getElementById('canMakeNowEmpty'),
@@ -831,6 +839,126 @@ async function addPantryItem() {
   await Promise.all([loadPantry(), loadGroceryList(), loadInsights()]);
 }
 
+// ---------- Barcode scanning -------------------------------------------
+//
+// Uses the browser's native BarcodeDetector API where it exists (Chrome,
+// Edge, Android -- notably not Safari/iOS as of writing) so there's no
+// extra JS library to ship for this; browsers without it just get the
+// manual-entry fallback, which is always available either way in case
+// the camera struggles with a label (glare, a curved surface, bad
+// lighting). A scanned/typed barcode resolves to a product name via
+// GET /api/barcode/:upc, which the person still gets to edit/confirm
+// before it's added to the pantry -- same "never trust a guess blindly"
+// principle as the planned receipt-scanning feature.
+
+let scannerStream = null;
+let scannerRAF = null;
+let scannerBusy = false;
+let scannerDetector = null;
+
+function stopDetectLoop() {
+  if (scannerRAF) cancelAnimationFrame(scannerRAF);
+  scannerRAF = null;
+}
+
+function scheduleDetectFrame() {
+  scannerRAF = requestAnimationFrame(detectFrame);
+}
+
+async function detectFrame() {
+  if (!scannerStream || scannerBusy || !scannerDetector) return;
+  try {
+    const results = await scannerDetector.detect(el.scannerVideo);
+    if (results.length) {
+      scannerBusy = true;
+      await lookupBarcode(results[0].rawValue, { fromCamera: true });
+      return; // lookupBarcode reschedules on failure, or closes the scanner on success
+    }
+  } catch {
+    // one frame failing to decode isn't worth surfacing -- just try the next one
+  }
+  scheduleDetectFrame();
+}
+
+async function openScanner() {
+  scannerBusy = false;
+  el.scannerManualInput.value = '';
+  el.scannerOverlay.classList.remove('hidden');
+
+  if (!('BarcodeDetector' in window)) {
+    el.scannerCameraWrap.hidden = true;
+    el.scannerStatus.textContent = "This browser can't scan with the camera -- type the barcode number below instead.";
+    return;
+  }
+
+  try {
+    scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  } catch {
+    el.scannerCameraWrap.hidden = true;
+    el.scannerStatus.textContent =
+      "Couldn't access the camera -- it needs HTTPS and camera permission. Type the barcode number below instead.";
+    return;
+  }
+
+  el.scannerCameraWrap.hidden = false;
+  el.scannerVideo.srcObject = scannerStream;
+  el.scannerStatus.textContent = 'Point your camera at a barcode…';
+  scannerDetector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+  scheduleDetectFrame();
+}
+
+function closeScanner() {
+  stopDetectLoop();
+  if (scannerStream) {
+    for (const track of scannerStream.getTracks()) track.stop();
+    scannerStream = null;
+  }
+  scannerDetector = null;
+  el.scannerVideo.srcObject = null;
+  el.scannerOverlay.classList.add('hidden');
+  scannerBusy = false;
+}
+
+async function lookupBarcode(rawUpc, { fromCamera = false } = {}) {
+  const upc = String(rawUpc || '').trim();
+  if (!/^\d{6,14}$/.test(upc)) {
+    el.scannerStatus.textContent = "That doesn't look like a barcode -- numbers only, 6-14 digits.";
+    if (fromCamera) {
+      setTimeout(() => {
+        scannerBusy = false;
+        scheduleDetectFrame();
+      }, 1200);
+    }
+    return;
+  }
+
+  el.scannerStatus.textContent = `Looking up ${upc}…`;
+  try {
+    const data = await fetchJson(`/api/barcode/${encodeURIComponent(upc)}`);
+    el.scannerStatus.textContent = `Found: ${data.name}${data.brand ? ` (${data.brand})` : ''}`;
+    setTimeout(() => {
+      closeScanner();
+      el.pantryIngredient.value = data.name;
+      el.pantryQuantity.focus();
+    }, 900);
+  } catch (err) {
+    el.scannerStatus.textContent =
+      err.status === 404
+        ? `No product found for ${upc} -- close this and type the ingredient in manually.`
+        : err.message || 'Lookup failed -- try again or type it in manually.';
+    if (fromCamera) {
+      setTimeout(() => {
+        scannerBusy = false;
+        scheduleDetectFrame();
+      }, 1500);
+    }
+  }
+}
+
+function submitManualBarcode() {
+  lookupBarcode(el.scannerManualInput.value);
+}
+
 async function pantryItemAction(ingredient, action) {
   await fetchJson(`/api/me/pantry/${encodeURIComponent(ingredient)}`, {
     method: 'PATCH',
@@ -1105,6 +1233,18 @@ el.pantryIngredient.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
     addPantryItem();
+  }
+});
+el.pantryScanBtn.addEventListener('click', () => openScanner().catch(() => {}));
+el.scannerClose.addEventListener('click', closeScanner);
+el.scannerOverlay.addEventListener('click', (e) => {
+  if (e.target === el.scannerOverlay) closeScanner();
+});
+el.scannerManualBtn.addEventListener('click', submitManualBarcode);
+el.scannerManualInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitManualBarcode();
   }
 });
 

@@ -145,6 +145,7 @@
         <input id="pantryPrice" type="number" placeholder="$ paid" step="0.01" min="0" />
         <input id="pantryStore" type="text" placeholder="store" />
         <button id="pantryAddBtn" class="secondary" type="button">+ Add</button>
+        <button id="pantryScanBtn" class="secondary" type="button">📷 Scan barcode</button>
       </div>
       <ul id="pantryInventoryList" class="pantry-inventory-list"></ul>
       <p id="pantryEmptyState" class="empty-state">Nothing in your pantry yet -- add what you've got.</p>
@@ -202,6 +203,21 @@
     <div class="modal">
       <button id="modalClose" class="modal-close" aria-label="Close">✕</button>
       <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="scannerOverlay" class="modal-overlay hidden">
+    <div class="modal scanner-modal">
+      <button id="scannerClose" class="modal-close" aria-label="Close">✕</button>
+      <h3>Scan a barcode</h3>
+      <div id="scannerCameraWrap" class="scanner-camera-wrap" hidden>
+        <video id="scannerVideo" autoplay muted playsinline></video>
+      </div>
+      <p id="scannerStatus" class="muted"></p>
+      <div class="scanner-manual-row">
+        <input id="scannerManualInput" type="text" inputmode="numeric" placeholder="or type the barcode number" autocomplete="off" />
+        <button id="scannerManualBtn" type="button" class="secondary">Look up</button>
+      </div>
     </div>
   </div>
 
