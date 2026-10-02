@@ -12,7 +12,8 @@
     "dev": "node --watch server/index.js",
     "seed": "node server/seed/seed.js",
     "seed:curated": "node server/seed/seed-curated.js",
-    "seed:all": "npm run seed && npm run seed:curated"
+    "seed:all": "npm run seed && npm run seed:curated",
+    "reset-password": "node server/scripts/reset-password.js"
   },
   "dependencies": {
     "express": "^4.19.2"

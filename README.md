@@ -37,6 +37,7 @@ server/
   services/auth.js             Password hashing + sessions
   services/pantry-insights.js  "Make now" / "unlock with X" / restock suggestions
   seed/seed.js       One-time import from TheMealDB
+  scripts/reset-password.js   CLI password reset, no login required (npm run reset-password)
 public/
   index.html, login.js   Landing page: sign in / accept invite / change password
   app.html, app.js        The actual recipe app -- pantry, search, meal plan, browse other users
@@ -346,6 +347,23 @@ every existing session for that account, same as a stolen-password
 precaution. The Admin panel's user list has a search box, since every
 account on the server is listed there flat (no household grouping to
 narrow it for you anymore).
+
+**Locked out of every admin account** (the in-app reset needs an admin
+session to use it, so it can't help if there isn't one)? Reset a
+password directly on the server, no login required, with
+`npm run reset-password`:
+```bash
+docker compose exec foodie npm run reset-password -- admin
+```
+Prints a random new password once (same style as the first-boot admin
+one) and forces a password change on next login. Pass a password of
+your own as a second argument instead of generating one
+(`npm run reset-password -- admin 'my-own-new-password-here'`) -- it
+goes through the same policy check as every other password in the app,
+so a bad one gets rejected with the same message you'd see in the UI.
+Either way, every existing session for that account is killed. Works
+for any account, not just `admin` -- useful generally for "I forgot my
+own password," not only a full lockout.
 
 **Getting an account via invite** (`POST /api/invites`) creates a fully
 independent account, same as one an admin creates directly -- there's no
