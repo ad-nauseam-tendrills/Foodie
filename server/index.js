@@ -1,0 +1,1034 @@
+'use strict';
+
+const express = require('express');
+const path = require('node:path');
+const db = require('./db');
+const { matchRecipes } = require('./services/matcher');
+const { getCurrentSeason, keywordsForSeason } = require('./data/seasonal');
+const { groceryCategoryFor, SECTION_ORDER } = require('./data/grocery-categories');
+const { canonicalizeIngredientName } = require('./data/ingredient-aliases');
+const { getOrCreateIngredientId } = require('./seed/lib');
+const {
+  hashPassword,
+  verifyPassword,
+  createToken,
+  generateTempPassword,
+  tokenExpiryIso,
+  inviteExpiryIso,
+  validatePassword,
+  isLoginRateLimited,
+  recordLoginAttempt,
+  SESSION_TTL_MS,
+} = require('./services/auth');
+const { pantryInsights, restockSuggestions, pantryIngredientNames } = require('./services/pantry-insights');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const SESSION_COOKIE = 'foodie_session';
+
+// Needed so req.secure / req.ip reflect the real client, not the nginx
+// hop in front of this container -- otherwise session cookies would never
+// get the Secure flag and rate limiting would key off one shared IP.
+app.set('trust proxy', 1);
+
+app.use(express.json());
+app.use(
+  express.static(path.join(__dirname, '..', 'public'), {
+    // Without this, browsers can keep serving a cached app.js/styles.css
+    // after a deploy until the user manually hard-refreshes -- "no-cache"
+    // doesn't mean "don't cache", it means "always ask the server first"
+    // (a fast 304 when unchanged, fresh content immediately when not).
+    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+  })
+);
+
+function parseList(value) {
+  return String(value || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// --- Auth ------------------------------------------------------------------
+//
+// Real per-person accounts -- no household layer. No third-party auth
+// provider, no email dependency -- just a login identifier + password
+// stored (hashed) in the same local database as everything else, because
+// the app is reachable outside your own network.
+
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  const cookies = {};
+  if (!header) return cookies;
+  for (const pair of header.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx === -1) continue;
+    const key = pair.slice(0, idx).trim();
+    const value = pair.slice(idx + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function setSessionCookie(req, res, token) {
+  const parts = [
+    `${SESSION_COOKIE}=${token}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+  ];
+  if (req.secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0`);
+}
+
+// Soft lookup -- returns null instead of rejecting, for routes (like
+// recipe search) that behave fine either way but personalize a bit when
+// someone happens to be signed in.
+function getSessionUser(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const row = db
+    .prepare(
+      `SELECT u.id AS id, u.email AS email, u.is_admin AS isAdmin,
+              u.must_change_password AS mustChangePassword, s.expires_at AS expiresAt
+       FROM sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.token = ?`
+    )
+    .get(token);
+  if (!row) return null;
+  if (new Date(row.expiresAt).getTime() < Date.now()) {
+    db.prepare(`DELETE FROM sessions WHERE token = ?`).run(token);
+    return null;
+  }
+  return { ...row, isAdmin: !!row.isAdmin, mustChangePassword: !!row.mustChangePassword };
+}
+
+// Blocking this server-side (not just redirecting client-side from
+// login.html) matters because the accounts most likely to still have
+// must_change_password set are the most sensitive ones -- the bootstrap
+// admin, and anyone an admin just provisioned -- so a leaked initial
+// password shouldn't be usable for anything beyond setting a real one.
+function requireAuth(req, res, next) {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.mustChangePassword) {
+    return res.status(403).json({ error: 'Password change required', mustChangePassword: true });
+  }
+  req.user = user;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.mustChangePassword) {
+    return res.status(403).json({ error: 'Password change required', mustChangePassword: true });
+  }
+  if (!user.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+  req.user = user;
+  next();
+}
+
+function authResponseBody(user, extra) {
+  return {
+    ok: true,
+    email: user.email,
+    isAdmin: !!user.isAdmin,
+    mustChangePassword: !!user.mustChangePassword,
+    ...extra,
+  };
+}
+
+// Not a real email-format check -- there's no outbound mail capability in
+// this app at all, so "email" is really just the login identifier people
+// happen to type their email address into. Just enough of a bound to keep
+// it sane: no whitespace (it'd break trimming/display), a reasonable
+// length, not empty.
+const EMAIL_RE = /^\S{3,120}$/;
+
+// Public self-signup is disabled -- it was being used to spray junk/probe
+// accounts (including an XSS payload as a household name, back when
+// households existed) at the live site. The only ways to get an account
+// now are an admin creating one directly (POST /api/admin/users) or an
+// invite from an existing user (POST /api/auth/accept-invite).
+app.post('/api/auth/signup', (req, res) => {
+  res.status(403).json({ error: 'Self-signup is disabled. Ask an admin for an account, or an existing user for an invite link.' });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const email = String((req.body && req.body.email) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  const rateLimitKey = `${req.ip}:${email.toLowerCase()}`;
+
+  if (isLoginRateLimited(rateLimitKey)) {
+    return res.status(429).json({ error: 'Too many attempts -- wait a few minutes and try again' });
+  }
+
+  const user = db.prepare(`SELECT * FROM users WHERE email = ? COLLATE NOCASE`).get(email);
+  const ok = !!(user && verifyPassword(password, user.password_salt, user.password_hash));
+  recordLoginAttempt(rateLimitKey, ok);
+  if (!ok) return res.status(401).json({ error: 'Wrong email or password' });
+
+  const token = createToken();
+  db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`).run(token, user.id, tokenExpiryIso());
+  setSessionCookie(req, res, token);
+  res.json(authResponseBody({ email: user.email, isAdmin: user.is_admin, mustChangePassword: user.must_change_password }));
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (token) db.prepare(`DELETE FROM sessions WHERE token = ?`).run(token);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// Every session for this account, not just the current browser -- for
+// "I left myself logged in somewhere" or a lost/stolen device. Works the
+// same as plain logout with must_change_password set, since walking away
+// from every session is always safe to allow.
+app.post('/api/auth/logout-all', (req, res) => {
+  const sessionUser = getSessionUser(req);
+  if (!sessionUser) return res.status(401).json({ error: 'Not signed in' });
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(sessionUser.id);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// For any already-signed-in user (forced after an admin-provisioned
+// login, or opted into any time from account settings).
+// Deliberately NOT behind requireAuth -- that middleware blocks any
+// account with must_change_password set, which is exactly the account
+// that needs to reach this endpoint. Just needs a valid session.
+app.post('/api/auth/change-password', (req, res) => {
+  const sessionUser = getSessionUser(req);
+  if (!sessionUser) return res.status(401).json({ error: 'Not signed in' });
+
+  const currentPassword = String((req.body && req.body.currentPassword) || '');
+  const newPassword = String((req.body && req.body.newPassword) || '');
+
+  const user = db.prepare(`SELECT * FROM users WHERE id = ?`).get(sessionUser.id);
+  if (!verifyPassword(currentPassword, user.password_salt, user.password_hash)) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+  const passwordError = validatePassword(newPassword, { email: user.email });
+  if (passwordError) return res.status(400).json({ error: passwordError });
+
+  const { salt, hash } = hashPassword(newPassword);
+  db.prepare(`UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0 WHERE id = ?`).run(
+    hash,
+    salt,
+    user.id
+  );
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  res.json(authResponseBody(user));
+});
+
+// --- Invites -----------------------------------------------------------
+//
+// The only way to get an account besides an admin creating one directly.
+// No email is sent by the app -- this just generates the link; whoever
+// creates it copies it and sends it however they want. Accepting one
+// creates a brand new, fully independent account -- there's no household
+// to join anymore.
+
+function inviteStatus(invite) {
+  if (invite.used_at) return 'used';
+  if (new Date(invite.expires_at).getTime() < Date.now()) return 'expired';
+  return 'pending';
+}
+
+// Public: lets the accept-invite page show a bit of context before
+// committing to an email/password.
+app.get('/api/invites/:token', (req, res) => {
+  const invite = db.prepare(`SELECT * FROM invites WHERE token = ?`).get(req.params.token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found' });
+  const status = inviteStatus(invite);
+  if (status !== 'pending') {
+    return res.status(410).json({ error: status === 'used' ? 'This invite has already been used' : 'This invite has expired' });
+  }
+  res.json({ note: invite.note, expiresAt: invite.expires_at });
+});
+
+app.post('/api/auth/accept-invite', (req, res) => {
+  const rateLimitKey = `accept-invite:${req.ip}`;
+  if (isLoginRateLimited(rateLimitKey)) {
+    return res.status(429).json({ error: 'Too many attempts -- wait a few minutes and try again' });
+  }
+
+  const token = String((req.body && req.body.token) || '').trim();
+  const email = String((req.body && req.body.email) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+
+  if (!token) return res.status(400).json({ error: 'Invite token is required' });
+  if (!EMAIL_RE.test(email)) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const invite = db.prepare(`SELECT * FROM invites WHERE token = ?`).get(token);
+  if (!invite) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(404).json({ error: 'Invite not found' });
+  }
+  const status = inviteStatus(invite);
+  if (status !== 'pending') {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(410).json({ error: status === 'used' ? 'This invite has already been used' : 'This invite has expired' });
+  }
+
+  const passwordError = validatePassword(password, { email });
+  if (passwordError) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(400).json({ error: passwordError });
+  }
+
+  const existingUser = db.prepare(`SELECT 1 FROM users WHERE email = ? COLLATE NOCASE`).get(email);
+  if (existingUser) {
+    recordLoginAttempt(rateLimitKey, false);
+    return res.status(409).json({ error: 'That email is already registered' });
+  }
+  recordLoginAttempt(rateLimitKey, true);
+
+  const { salt, hash } = hashPassword(password);
+  const result = db.prepare(`INSERT INTO users (email, password_hash, password_salt) VALUES (?, ?, ?)`).run(email, hash, salt);
+
+  db.prepare(`UPDATE invites SET used_at = datetime('now'), used_by_user_id = ? WHERE id = ?`).run(
+    result.lastInsertRowid,
+    invite.id
+  );
+
+  const sessionToken = createToken();
+  db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`).run(
+    sessionToken,
+    result.lastInsertRowid,
+    tokenExpiryIso()
+  );
+  setSessionCookie(req, res, sessionToken);
+  res.json(authResponseBody({ email, isAdmin: false, mustChangePassword: false }));
+});
+
+// Invites created by the signed-in user, for themselves to hand out --
+// there's no household to scope these to anymore, just "who generated
+// this link".
+app.get('/api/invites', requireAuth, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT i.id AS id, i.token AS token, i.note AS note, i.created_at AS createdAt, i.expires_at AS expiresAt,
+              i.used_at AS usedAt, u.email AS usedByEmail
+       FROM invites i
+       LEFT JOIN users u ON u.id = i.used_by_user_id
+       WHERE i.created_by_user_id = ?
+       ORDER BY i.created_at DESC
+       LIMIT 30`
+    )
+    .all(req.user.id);
+  const host = `${req.protocol}://${req.get('host')}`;
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      status: inviteStatus({ used_at: r.usedAt, expires_at: r.expiresAt }),
+      note: r.note,
+      createdAt: r.createdAt,
+      expiresAt: r.expiresAt,
+      usedByEmail: r.usedByEmail,
+      url: `${host}/?invite=${r.token}`,
+    }))
+  );
+});
+
+app.post('/api/invites', requireAuth, (req, res) => {
+  const note = req.body && req.body.note ? String(req.body.note).trim().slice(0, 200) : null;
+  const token = createToken();
+  db.prepare(`INSERT INTO invites (token, note, created_by_user_id, expires_at) VALUES (?, ?, ?, ?)`).run(
+    token,
+    note,
+    req.user.id,
+    inviteExpiryIso()
+  );
+
+  const host = `${req.protocol}://${req.get('host')}`;
+  res.json({ ok: true, url: `${host}/?invite=${token}`, expiresAt: inviteExpiryIso() });
+});
+
+app.delete('/api/invites/:id', requireAuth, (req, res) => {
+  db.prepare(`DELETE FROM invites WHERE id = ? AND created_by_user_id = ?`).run(req.params.id, req.user.id);
+  res.json({ ok: true });
+});
+
+// --- Admin ---------------------------------------------------------------
+//
+// A site-wide role (`users.is_admin`) for provisioning accounts directly
+// -- an alternative to the invite flow for whoever runs the server. Every
+// account an admin creates is forced to change its password on first
+// login.
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT id, email, is_admin AS isAdmin, must_change_password AS mustChangePassword, created_at AS createdAt
+       FROM users
+       ORDER BY email COLLATE NOCASE`
+    )
+    .all();
+  res.json(rows.map((r) => ({ ...r, isAdmin: !!r.isAdmin, mustChangePassword: !!r.mustChangePassword })));
+});
+
+app.post('/api/admin/users', requireAdmin, (req, res) => {
+  const email = String((req.body && req.body.email) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  const makeAdmin = !!(req.body && req.body.isAdmin);
+
+  if (!EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+  const passwordError = validatePassword(password, { email });
+  if (passwordError) return res.status(400).json({ error: passwordError });
+
+  const existing = db.prepare(`SELECT 1 FROM users WHERE email = ? COLLATE NOCASE`).get(email);
+  if (existing) return res.status(409).json({ error: 'That email is already registered' });
+
+  const { salt, hash } = hashPassword(password);
+  db.prepare(
+    `INSERT INTO users (email, password_hash, password_salt, is_admin, must_change_password) VALUES (?, ?, ?, ?, 1)`
+  ).run(email, hash, salt, makeAdmin ? 1 : 0);
+
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.id === req.user.id) return res.status(400).json({ error: "Can't delete your own account" });
+  db.prepare(`DELETE FROM users WHERE id = ?`).run(target.id);
+  res.json({ ok: true });
+});
+
+// Edit an account's email and/or admin status -- the cleanup counterpart
+// to creating one: fixing a typo'd email, promoting/demoting someone, or
+// both at once. Guards against an admin locking themselves out by
+// removing their own access with nobody else around to undo it.
+app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const updates = [];
+  const params = [];
+
+  if (req.body && req.body.email !== undefined) {
+    const email = String(req.body.email).trim();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Email is required' });
+    const collision = db.prepare(`SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id != ?`).get(email, target.id);
+    if (collision) return res.status(409).json({ error: 'That email is already registered' });
+    updates.push('email = ?');
+    params.push(email);
+  }
+
+  if (req.body && req.body.isAdmin !== undefined) {
+    const isAdmin = !!req.body.isAdmin;
+    if (!isAdmin && target.id === req.user.id) {
+      return res.status(400).json({ error: "Can't remove your own admin access" });
+    }
+    updates.push('is_admin = ?');
+    params.push(isAdmin ? 1 : 0);
+  }
+
+  if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params, target.id);
+  res.json({ ok: true });
+});
+
+// There's no self-service "forgot password" (no email to send a link
+// through) -- this is the fallback: an admin sets a new temporary
+// password directly, and the account is forced to change it again on
+// next login, same as a freshly-created one. Also invalidates every
+// existing session for that account, since the old password (and
+// whoever had it) shouldn't still be able to act as them. Omitting
+// `password` generates a random one and returns it, for "just get them
+// into a working state" without having to compose a password by hand.
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+  const target = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  const providedPassword = req.body && req.body.password ? String(req.body.password) : '';
+  const password = providedPassword || generateTempPassword();
+  const passwordError = validatePassword(password, { email: target.email });
+  if (passwordError) return res.status(400).json({ error: passwordError });
+
+  const { salt, hash } = hashPassword(password);
+  db.prepare(`UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 1 WHERE id = ?`).run(
+    hash,
+    salt,
+    target.id
+  );
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(target.id);
+
+  res.json({ ok: true, password: providedPassword ? undefined : password });
+});
+
+// --- Ingredients (autocomplete) ---------------------------------------
+//
+// The whole app requires a session, full stop -- these all pick up
+// requireAuth too.
+
+app.get('/api/ingredients', requireAuth, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const rows = q
+    ? db.prepare(`SELECT name FROM ingredients WHERE name LIKE ? ORDER BY name LIMIT 25`).all(`%${q}%`)
+    : db.prepare(`SELECT name FROM ingredients ORDER BY name LIMIT 100`).all();
+  res.json(rows.map((r) => r.name));
+});
+
+// --- Barcode lookup -----------------------------------------------------
+//
+// Scanning a packaged product's barcode (from the Pantry panel) resolves
+// it to a name via Open Food Facts (openfoodfacts.org) -- free, no API
+// key, no account. Only reachable once ever per barcode, after which
+// barcode_cache answers forever: a UPC's product doesn't change, so
+// there's no reason to ask again. This is the one place this app makes
+// an outbound call after initial recipe seeding, and it's opt-in (only
+// happens when someone scans something) rather than a background sync.
+
+const BARCODE_RE = /^\d{6,14}$/;
+const BARCODE_NOT_FOUND_RECHECK_MS = 7 * 24 * 60 * 60 * 1000; // give a newly-catalogued product a week to show up
+
+function cacheRowIsFresh(row) {
+  if (!row) return false;
+  if (row.found) return true; // a found product's name doesn't change
+  const age = Date.now() - new Date(row.looked_up_at.replace(' ', 'T') + 'Z').getTime();
+  return age < BARCODE_NOT_FOUND_RECHECK_MS;
+}
+
+app.get('/api/barcode/:upc', requireAuth, async (req, res) => {
+  const upc = String(req.params.upc || '').trim();
+  if (!BARCODE_RE.test(upc)) return res.status(400).json({ error: 'Not a valid barcode' });
+
+  const cached = db.prepare(`SELECT * FROM barcode_cache WHERE upc = ?`).get(upc);
+  if (cacheRowIsFresh(cached)) {
+    if (!cached.found) return res.status(404).json({ error: 'No product found for that barcode' });
+    return res.json({ name: cached.name, brand: cached.brand });
+  }
+
+  let body;
+  try {
+    const response = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(upc)}.json?fields=product_name,brands`,
+      { headers: { 'User-Agent': 'Foodie/1.0 (self-hosted recipe app)' } }
+    );
+    if (!response.ok) throw new Error(`Open Food Facts returned HTTP ${response.status}`);
+    body = await response.json();
+  } catch (err) {
+    console.warn(`[barcode] lookup failed for ${upc}: ${err.message}`);
+    return res
+      .status(502)
+      .json({ error: "Couldn't reach the barcode lookup service -- try again, or type the ingredient in by hand" });
+  }
+
+  const product = body && body.status === 1 ? body.product : null;
+  const name = product && product.product_name ? String(product.product_name).trim() : null;
+  const brand = product && product.brands ? String(product.brands).split(',')[0].trim() : null;
+
+  db.prepare(
+    `INSERT INTO barcode_cache (upc, found, name, brand, looked_up_at) VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(upc) DO UPDATE SET found = excluded.found, name = excluded.name, brand = excluded.brand, looked_up_at = excluded.looked_up_at`
+  ).run(upc, name ? 1 : 0, name, brand);
+
+  if (!name) return res.status(404).json({ error: 'No product found for that barcode' });
+  res.json({ name, brand });
+});
+
+// --- Recipes -------------------------------------------------------------
+
+// Categories are TheMealDB's broad groupings (Chicken, Seafood, Dessert,
+// Vegetarian, ...) -- this is what separates "dessert" from "dinner".
+app.get('/api/categories', requireAuth, (req, res) => {
+  const rows = db
+    .prepare(`SELECT DISTINCT category FROM recipes WHERE category IS NOT NULL AND category != '' ORDER BY category`)
+    .all();
+  res.json(rows.map((r) => r.category));
+});
+
+// Areas are cuisine/region (American, Chilean, German, Italian, ...).
+app.get('/api/areas', requireAuth, (req, res) => {
+  const rows = db
+    .prepare(`SELECT DISTINCT area FROM recipes WHERE area IS NOT NULL AND area != '' ORDER BY area`)
+    .all();
+  res.json(rows.map((r) => r.area));
+});
+
+// Tags are finer-grained and freeform (Soup, Curry, Spicy, ...) -- this
+// is what makes "just show me soups" possible even though Soup isn't a
+// category of its own.
+app.get('/api/tags', requireAuth, (req, res) => {
+  const rows = db.prepare(`SELECT tags FROM recipes WHERE tags IS NOT NULL AND tags != ''`).all();
+  const seen = new Set();
+  for (const row of rows) {
+    for (const tag of row.tags.split(',')) {
+      const clean = tag.trim();
+      if (clean) seen.add(clean);
+    }
+  }
+  res.json([...seen].sort((a, b) => a.localeCompare(b)));
+});
+
+// A regional, hand-curated approximation of what's in season right now
+// (Northeastern US) -- not location-aware, just a static harvest
+// calendar -- intersected with ingredients actually used in this
+// database so the list is useful rather than aspirational.
+app.get('/api/seasonal/current', requireAuth, (req, res) => {
+  const season = getCurrentSeason();
+  const keywords = keywordsForSeason(season);
+  const allIngredients = db.prepare(`SELECT name FROM ingredients`).all();
+  const inSeason = allIngredients
+    .filter((ing) => keywords.some((kw) => ing.name.toLowerCase().includes(kw)))
+    .map((ing) => ing.name)
+    .sort((a, b) => a.localeCompare(b));
+  res.json({ season, ingredients: inSeason });
+});
+
+app.get('/api/recipes/match', requireAuth, (req, res) => {
+  const have = parseList(req.query.have);
+  const exclude = parseList(req.query.exclude);
+  const category = String(req.query.category || '').trim() || null;
+  const tags = parseList(req.query.tag);
+  const area = String(req.query.area || '').trim() || null;
+  const nameQuery = String(req.query.q || '').trim() || null;
+  const seasonalOnly = req.query.seasonal === 'true';
+  const favoriteOnly = req.query.favoritesOnly === 'true';
+
+  // Lightly de-emphasize what you personally cooked in the last 10 days
+  // -- purely a ranking nudge.
+  let recentRecipeIds = new Set();
+  const ownRow = db.prepare(`SELECT cooked_log FROM users WHERE id = ?`).get(req.user.id);
+  if (ownRow) {
+    const log = JSON.parse(ownRow.cooked_log);
+    const cutoff = Date.now() - 10 * 24 * 60 * 60 * 1000;
+    recentRecipeIds = new Set(log.filter((e) => new Date(e.date).getTime() >= cutoff).map((e) => e.recipeId));
+  }
+
+  // Favorites are per-account, so which account's star this reflects is
+  // whichever one the caller is currently looking at -- their own by
+  // default, but could be any user they're browsing read-only.
+  let favoriteIds = new Set();
+  const favoritesEmail = String(req.query.email || '').trim();
+  if (favoritesEmail) {
+    const favUser = db.prepare(`SELECT favorite_recipes FROM users WHERE email = ? COLLATE NOCASE`).get(favoritesEmail);
+    if (favUser) favoriteIds = new Set(JSON.parse(favUser.favorite_recipes || '[]'));
+  }
+
+  // "Show me what's seasonal" also lightly re-ranks results toward
+  // seasonal ingredients even when the filter isn't strictly on.
+  const seasonalKeywords = keywordsForSeason(getCurrentSeason());
+
+  const results = matchRecipes(db, {
+    have,
+    exclude,
+    recentRecipeIds,
+    category,
+    tags,
+    area,
+    nameQuery,
+    favoriteIds,
+    favoriteOnly,
+    seasonalKeywords,
+    seasonalOnly,
+  });
+  res.json(results);
+});
+
+app.get('/api/recipes/:id', requireAuth, (req, res) => {
+  const recipe = db.prepare(`SELECT * FROM recipes WHERE id = ?`).get(req.params.id);
+  if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
+  const ingredients = db
+    .prepare(
+      `SELECT i.name AS name, ri.measure AS measure
+       FROM recipe_ingredients ri
+       JOIN ingredients i ON i.id = ri.ingredient_id
+       WHERE ri.recipe_id = ?`
+    )
+    .all(recipe.id);
+  res.json({ ...recipe, ingredients });
+});
+
+// --- Users (per-account data + cross-user read access) -------------------
+//
+// Read access (this section's GET routes under /api/users/:email) is
+// open to any signed-in user, not just the account's own owner -- full
+// cross-user visibility is a deliberate feature (see README), not an
+// oversight. Every write lives under /api/me/* instead, which always acts
+// on the signed-in user's own account -- there's no "same household"
+// check needed anymore, since a session can only ever write its own row.
+
+function resolveUserByEmail(email) {
+  return db.prepare(`SELECT * FROM users WHERE email = ? COLLATE NOCASE`).get(email);
+}
+
+function requireUserView(req, res, next) {
+  const user = resolveUserByEmail(req.params.email);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  req.viewUser = user;
+  next();
+}
+
+const recipeNameStmt = db.prepare(`SELECT name FROM recipes WHERE id = ?`);
+
+function topRecipesFromLog(cookedLog) {
+  const counts = new Map();
+  for (const entry of cookedLog) {
+    const recipe = recipeNameStmt.get(entry.recipeId);
+    if (!recipe) continue;
+    counts.set(recipe.name, (counts.get(recipe.name) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, count]) => ({ name, count }));
+}
+
+function userStateJson(user) {
+  const cookedLog = JSON.parse(user.cooked_log || '[]');
+  return {
+    email: user.email,
+    liked: JSON.parse(user.liked_ingredients),
+    disliked: JSON.parse(user.disliked_ingredients),
+    cookedLog,
+    cookCount: cookedLog.length,
+    topRecipes: topRecipesFromLog(cookedLog),
+    planned: JSON.parse(user.planned_recipes || '[]'),
+    favorites: JSON.parse(user.favorite_recipes || '[]'),
+  };
+}
+
+// For the "browse other users" list -- every signed-in account, lightly
+// summarized.
+app.get('/api/users', requireAuth, (req, res) => {
+  const rows = db.prepare(`SELECT email, cooked_log AS cookedLog FROM users ORDER BY email COLLATE NOCASE`).all();
+  res.json(
+    rows.map((r) => ({
+      email: r.email,
+      cookCount: JSON.parse(r.cookedLog || '[]').length,
+      isYou: r.email.toLowerCase() === req.user.email.toLowerCase(),
+    }))
+  );
+});
+
+app.get('/api/users/:email', requireAuth, requireUserView, (req, res) => {
+  res.json(userStateJson(req.viewUser));
+});
+
+app.get('/api/me', requireAuth, (req, res) => {
+  const user = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.user.id);
+  res.json(userStateJson(user));
+});
+
+app.put('/api/me/preferences', requireAuth, (req, res) => {
+  const liked = Array.isArray(req.body.liked) ? req.body.liked : [];
+  const disliked = Array.isArray(req.body.disliked) ? req.body.disliked : [];
+  db.prepare(`UPDATE users SET liked_ingredients = ?, disliked_ingredients = ? WHERE id = ?`).run(
+    JSON.stringify(liked),
+    JSON.stringify(disliked),
+    req.user.id
+  );
+  res.json({ ok: true });
+});
+
+app.post('/api/me/cooked', requireAuth, (req, res) => {
+  const recipeId = Number(req.body.recipeId);
+  if (!recipeId) return res.status(400).json({ error: 'recipeId is required' });
+  if (!db.prepare(`SELECT 1 FROM recipes WHERE id = ?`).get(recipeId)) {
+    return res.status(404).json({ error: 'Recipe not found' });
+  }
+
+  const row = db.prepare(`SELECT cooked_log FROM users WHERE id = ?`).get(req.user.id);
+  const log = JSON.parse(row.cooked_log);
+  log.unshift({ recipeId, date: new Date().toISOString().slice(0, 10) });
+  const trimmed = log.slice(0, 200);
+
+  db.prepare(`UPDATE users SET cooked_log = ? WHERE id = ?`).run(JSON.stringify(trimmed), req.user.id);
+
+  // Best-effort pantry usage: for whatever this recipe needs that's
+  // actually sitting in the pantry, decrement a tracked quantity by one
+  // unit (there's no structured "2 cups" parsing to decrement precisely
+  // by) and log it, so restock suggestions and "what can I make" both
+  // reflect reality without logging every ingredient by hand.
+  const recipeIngredientIds = db.prepare(`SELECT ingredient_id FROM recipe_ingredients WHERE recipe_id = ?`).all(recipeId);
+  const pantryStmt = db.prepare(`SELECT * FROM pantry_items WHERE user_id = ? AND ingredient_id = ?`);
+  const decrementStmt = db.prepare(`UPDATE pantry_items SET quantity = ?, updated_at = datetime('now') WHERE id = ?`);
+  const logUsage = db.prepare(
+    `INSERT INTO usage_events (user_id, ingredient_id, recipe_id, action, quantity) VALUES (?, ?, ?, 'consumed', ?)`
+  );
+
+  for (const { ingredient_id: ingredientId } of recipeIngredientIds) {
+    const pantryItem = pantryStmt.get(req.user.id, ingredientId);
+    if (!pantryItem) continue;
+    let usedQuantity = null;
+    if (pantryItem.quantity !== null) {
+      usedQuantity = 1;
+      decrementStmt.run(Math.max(0, pantryItem.quantity - 1), pantryItem.id);
+    }
+    logUsage.run(req.user.id, ingredientId, recipeId, usedQuantity);
+  }
+
+  res.json({ ok: true });
+});
+
+// --- Meal plan + grocery list ---------------------------------------------
+
+app.post('/api/me/plan', requireAuth, (req, res) => {
+  const recipeId = Number(req.body.recipeId);
+  if (!recipeId) return res.status(400).json({ error: 'recipeId is required' });
+  if (!db.prepare(`SELECT 1 FROM recipes WHERE id = ?`).get(recipeId)) {
+    return res.status(404).json({ error: 'Recipe not found' });
+  }
+
+  const row = db.prepare(`SELECT planned_recipes FROM users WHERE id = ?`).get(req.user.id);
+  const planned = JSON.parse(row.planned_recipes || '[]');
+  if (!planned.includes(recipeId)) planned.push(recipeId);
+
+  db.prepare(`UPDATE users SET planned_recipes = ? WHERE id = ?`).run(JSON.stringify(planned), req.user.id);
+  res.json({ ok: true, planned });
+});
+
+app.delete('/api/me/plan/:recipeId', requireAuth, (req, res) => {
+  const recipeId = Number(req.params.recipeId);
+  const row = db.prepare(`SELECT planned_recipes FROM users WHERE id = ?`).get(req.user.id);
+  const planned = JSON.parse(row.planned_recipes || '[]').filter((id) => id !== recipeId);
+
+  db.prepare(`UPDATE users SET planned_recipes = ? WHERE id = ?`).run(JSON.stringify(planned), req.user.id);
+  res.json({ ok: true, planned });
+});
+
+// Favorites/saved recipes -- distinct from the meal plan (which is "I'm
+// cooking this soon" and clears itself off the grocery list once it's
+// built) and from cooked history (a log of the past). A favorite is just
+// "keep this around," the same feature every recipe app (Paprika,
+// Mealime, Whisk) has under some name.
+app.post('/api/me/favorites', requireAuth, (req, res) => {
+  const recipeId = Number(req.body.recipeId);
+  if (!recipeId) return res.status(400).json({ error: 'recipeId is required' });
+  if (!db.prepare(`SELECT 1 FROM recipes WHERE id = ?`).get(recipeId)) {
+    return res.status(404).json({ error: 'Recipe not found' });
+  }
+
+  const row = db.prepare(`SELECT favorite_recipes FROM users WHERE id = ?`).get(req.user.id);
+  const favorites = JSON.parse(row.favorite_recipes || '[]');
+  if (!favorites.includes(recipeId)) favorites.push(recipeId);
+
+  db.prepare(`UPDATE users SET favorite_recipes = ? WHERE id = ?`).run(JSON.stringify(favorites), req.user.id);
+  res.json({ ok: true, favorites });
+});
+
+app.delete('/api/me/favorites/:recipeId', requireAuth, (req, res) => {
+  const recipeId = Number(req.params.recipeId);
+  const row = db.prepare(`SELECT favorite_recipes FROM users WHERE id = ?`).get(req.user.id);
+  const favorites = JSON.parse(row.favorite_recipes || '[]').filter((id) => id !== recipeId);
+
+  db.prepare(`UPDATE users SET favorite_recipes = ? WHERE id = ?`).run(JSON.stringify(favorites), req.user.id);
+  res.json({ ok: true, favorites });
+});
+
+// The grocery list is generated fresh from the current plan each time --
+// there's no separate stored list to fall out of sync with the plan.
+// Grouped into rough shopping sections (Produce, Meat & Seafood, ...)
+// and with anything already in the pantry filtered out.
+function groceryListJson(user) {
+  const plannedIds = JSON.parse(user.planned_recipes || '[]');
+  const pantrySet = new Set(pantryIngredientNames(db, user.id).map((p) => p.toLowerCase()));
+
+  const recipeStmt = db.prepare(`SELECT id, name FROM recipes WHERE id = ?`);
+  const ingredientsStmt = db.prepare(
+    `SELECT i.name AS name, ri.measure AS measure
+     FROM recipe_ingredients ri
+     JOIN ingredients i ON i.id = ri.ingredient_id
+     WHERE ri.recipe_id = ?`
+  );
+
+  const recipes = [];
+  const itemsByIngredient = new Map();
+
+  for (const recipeId of plannedIds) {
+    const recipe = recipeStmt.get(recipeId);
+    if (!recipe) continue; // recipe database was re-seeded/changed since planning
+    recipes.push({ id: recipe.id, name: recipe.name });
+
+    for (const ing of ingredientsStmt.all(recipeId)) {
+      if (pantrySet.has(ing.name.toLowerCase())) continue; // already have it -- don't list it
+      const key = ing.name.toLowerCase();
+      if (!itemsByIngredient.has(key)) {
+        itemsByIngredient.set(key, { ingredient: ing.name, section: groceryCategoryFor(ing.name), entries: [] });
+      }
+      itemsByIngredient.get(key).entries.push({ recipe: recipe.name, measure: ing.measure || '' });
+    }
+  }
+
+  const items = [...itemsByIngredient.values()].sort((a, b) => {
+    const sectionDiff = SECTION_ORDER.indexOf(a.section) - SECTION_ORDER.indexOf(b.section);
+    return sectionDiff !== 0 ? sectionDiff : a.ingredient.localeCompare(b.ingredient);
+  });
+  return { recipes, items, sections: SECTION_ORDER };
+}
+
+app.get('/api/me/grocery-list', requireAuth, (req, res) => {
+  const user = db.prepare(`SELECT * FROM users WHERE id = ?`).get(req.user.id);
+  res.json(groceryListJson(user));
+});
+
+app.get('/api/users/:email/grocery-list', requireAuth, requireUserView, (req, res) => {
+  res.json(groceryListJson(req.viewUser));
+});
+
+// --- Pantry inventory -------------------------------------------------------
+//
+// Structured (quantity/unit/price/store), not just a name list, so it can
+// back "what can I make right now", "buy X to unlock these", and restock
+// suggestions based on what's actually used and paid.
+
+function listPantry(userId) {
+  return db
+    .prepare(
+      `SELECT i.name AS ingredient, p.quantity AS quantity, p.unit AS unit, p.price_paid AS price,
+              p.store AS store, p.purchased_at AS purchasedAt, p.expires_at AS expiresAt
+       FROM pantry_items p
+       JOIN ingredients i ON i.id = p.ingredient_id
+       WHERE p.user_id = ?
+       ORDER BY i.name COLLATE NOCASE`
+    )
+    .all(userId);
+}
+
+app.get('/api/me/pantry', requireAuth, (req, res) => res.json(listPantry(req.user.id)));
+app.get('/api/users/:email/pantry', requireAuth, requireUserView, (req, res) => res.json(listPantry(req.viewUser.id)));
+
+// Add or restock an item. A restock with a price logs a 'purchased' usage
+// event (this is the only price data the app ever has -- what was typed
+// in, never a live market lookup).
+app.post('/api/me/pantry', requireAuth, (req, res) => {
+  const rawName = String((req.body && req.body.ingredient) || '').trim();
+  if (!rawName) return res.status(400).json({ error: 'ingredient is required' });
+  const ingredientId = getOrCreateIngredientId(rawName);
+
+  const hasQuantity = req.body.quantity !== undefined && req.body.quantity !== null && req.body.quantity !== '';
+  const quantity = hasQuantity ? Number(req.body.quantity) : null;
+  if (hasQuantity && Number.isNaN(quantity)) return res.status(400).json({ error: 'quantity must be a number' });
+  const unit = req.body.unit ? String(req.body.unit).trim() : null;
+  const hasPrice = req.body.price !== undefined && req.body.price !== null && req.body.price !== '';
+  const price = hasPrice ? Number(req.body.price) : null;
+  if (hasPrice && Number.isNaN(price)) return res.status(400).json({ error: 'price must be a number' });
+  const store = req.body.store ? String(req.body.store).trim() : null;
+
+  const existing = db.prepare(`SELECT * FROM pantry_items WHERE user_id = ? AND ingredient_id = ?`).get(req.user.id, ingredientId);
+
+  // Restocking an item with a numeric quantity adds to what's already
+  // tracked; restocking without a quantity (or an item that was
+  // untracked) just refreshes price/store.
+  let newQuantity = quantity;
+  if (existing && existing.quantity !== null && quantity !== null) {
+    newQuantity = existing.quantity + quantity;
+  } else if (existing && quantity === null) {
+    newQuantity = existing.quantity;
+  }
+
+  db.prepare(
+    `INSERT INTO pantry_items (user_id, ingredient_id, quantity, unit, price_paid, store, purchased_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+     ON CONFLICT(user_id, ingredient_id) DO UPDATE SET
+       quantity = excluded.quantity,
+       unit = COALESCE(excluded.unit, pantry_items.unit),
+       price_paid = COALESCE(excluded.price_paid, pantry_items.price_paid),
+       store = COALESCE(excluded.store, pantry_items.store),
+       purchased_at = datetime('now'),
+       updated_at = datetime('now')`
+  ).run(req.user.id, ingredientId, newQuantity, unit, price, store);
+
+  if (hasPrice) {
+    db.prepare(
+      `INSERT INTO usage_events (user_id, ingredient_id, action, quantity, price, store) VALUES (?, ?, 'purchased', ?, ?, ?)`
+    ).run(req.user.id, ingredientId, quantity, price, store);
+  }
+
+  res.json({ ok: true, pantry: listPantry(req.user.id) });
+});
+
+// Adjust a tracked quantity, or record that an item was used up / thrown
+// out (removes it from the pantry and logs which one it was, so waste
+// shows up in the numbers instead of just silently disappearing).
+app.patch('/api/me/pantry/:ingredient', requireAuth, (req, res) => {
+  const clean = canonicalizeIngredientName(req.params.ingredient);
+  const row = db
+    .prepare(
+      `SELECT p.* FROM pantry_items p JOIN ingredients i ON i.id = p.ingredient_id
+       WHERE p.user_id = ? AND i.name = ? COLLATE NOCASE`
+    )
+    .get(req.user.id, clean);
+  if (!row) return res.status(404).json({ error: 'Not in pantry' });
+
+  const action = req.body && req.body.action;
+  if (action === 'used_up' || action === 'wasted') {
+    db.prepare(`DELETE FROM pantry_items WHERE id = ?`).run(row.id);
+    db.prepare(`INSERT INTO usage_events (user_id, ingredient_id, action, quantity) VALUES (?, ?, ?, ?)`).run(
+      req.user.id,
+      row.ingredient_id,
+      action === 'used_up' ? 'consumed' : 'wasted',
+      row.quantity
+    );
+    return res.json({ ok: true, pantry: listPantry(req.user.id) });
+  }
+
+  if (req.body && req.body.quantity !== undefined) {
+    const quantity = req.body.quantity === null || req.body.quantity === '' ? null : Number(req.body.quantity);
+    if (quantity !== null && Number.isNaN(quantity)) return res.status(400).json({ error: 'quantity must be a number' });
+    db.prepare(`UPDATE pantry_items SET quantity = ?, updated_at = datetime('now') WHERE id = ?`).run(quantity, row.id);
+  }
+  res.json({ ok: true, pantry: listPantry(req.user.id) });
+});
+
+// Plain removal -- "added this by mistake", no usage event.
+app.delete('/api/me/pantry/:ingredient', requireAuth, (req, res) => {
+  const clean = canonicalizeIngredientName(req.params.ingredient);
+  db.prepare(
+    `DELETE FROM pantry_items WHERE user_id = ? AND ingredient_id = (SELECT id FROM ingredients WHERE name = ? COLLATE NOCASE)`
+  ).run(req.user.id, clean);
+  res.json({ ok: true, pantry: listPantry(req.user.id) });
+});
+
+app.get('/api/me/pantry/insights', requireAuth, (req, res) => res.json(pantryInsights(db, req.user.id)));
+app.get('/api/users/:email/pantry/insights', requireAuth, requireUserView, (req, res) =>
+  res.json(pantryInsights(db, req.viewUser.id))
+);
+
+app.get('/api/me/pantry/restock-suggestions', requireAuth, (req, res) => res.json(restockSuggestions(db, req.user.id)));
+app.get('/api/users/:email/pantry/restock-suggestions', requireAuth, requireUserView, (req, res) =>
+  res.json(restockSuggestions(db, req.viewUser.id))
+);
+
+app.get('/api/health', (req, res) => {
+  const recipeCount = db.prepare(`SELECT COUNT(*) AS n FROM recipes`).get().n;
+  res.json({ ok: true, recipes: recipeCount });
+});
+
+// Expired sessions are only ever deleted lazily, when someone tries to
+// use that specific token (see getSessionUser) -- anyone who closes
+// their browser or clears cookies without logging out leaves a row
+// behind forever otherwise. A small personal app will never make this
+// urgent, but there's no reason to let it grow unbounded either.
+const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+function sweepExpiredSessions() {
+  db.prepare(`DELETE FROM sessions WHERE expires_at < datetime('now')`).run();
+}
+sweepExpiredSessions();
+setInterval(sweepExpiredSessions, SESSION_SWEEP_INTERVAL_MS).unref();
+
+app.listen(PORT, () => {
+  console.log(`Foodie listening on http://localhost:${PORT}`);
+});

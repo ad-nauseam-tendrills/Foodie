@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foodie — admin</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🍽️ Foodie admin</h1>
+    <div class="account-bar">
+      <span id="accountStatusText" class="account-status"></span>
+      <a href="/app.html" class="link-btn">Back to app</a>
+      <button id="signOutBtn" class="secondary">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Create an account</h2>
+      <p class="muted">
+        Sets a temporary password directly -- no invite link, no email. The person is forced to
+        change it the first time they sign in.
+      </p>
+      <form id="createUserForm" class="stacked-form">
+        <label for="newUserEmail">Email</label>
+        <input id="newUserEmail" type="text" autocomplete="off" />
+
+        <label for="newUserPassword">Temporary password</label>
+        <input id="newUserPassword" type="text" autocomplete="off" />
+        <p class="form-hint">At least 14 characters. No forced symbols/digits, but avoid common words and repeated patterns.</p>
+
+        <label class="checkbox-label"><input id="newUserIsAdmin" type="checkbox" /> Also make this an admin</label>
+
+        <button id="createUserBtn" type="submit" class="primary">Create account</button>
+      </form>
+      <p id="adminError" class="form-error" hidden></p>
+      <p id="adminSuccess" class="form-success" hidden></p>
+    </section>
+
+    <section class="panel">
+      <h2>Users</h2>
+      <p id="usersStats" class="muted"></p>
+
+      <div class="admin-filter-row">
+        <input id="usersSearch" type="search" class="search-input" placeholder="Search by email..." />
+        <div class="filter-chips" id="usersFilterChips">
+          <button type="button" class="filter-chip active" data-filter="all">All</button>
+          <button type="button" class="filter-chip" data-filter="admins">Admins</button>
+          <button type="button" class="filter-chip" data-filter="pending">Must change password</button>
+        </div>
+      </div>
+
+      <div id="bulkActionBar" class="bulk-action-bar" hidden>
+        <span id="bulkSelectedCount"></span>
+        <button id="bulkDeleteBtn" type="button" class="danger">Delete selected</button>
+        <button id="bulkClearBtn" type="button" class="link-btn">Clear selection</button>
+      </div>
+
+      <ul id="usersList" class="admin-list"></ul>
+    </section>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
