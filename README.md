@@ -40,7 +40,7 @@ server/
   scripts/reset-password.js   CLI password reset, no login required (npm run reset-password)
 public/
   index.html, login.js   Landing page: sign in / accept invite / change password
-  app.html, app.js        The actual recipe app -- pantry, search, meal plan, browse other users
+  app.html, app.js        The actual recipe app -- pantry, search, meal plan, barcode scan
   admin.html, admin.js    Admin-only: create/reset/delete accounts
   styles.css              Shared by all four pages (no framework, no build step)
 data/
@@ -202,6 +202,32 @@ docker compose -f docker-compose.staging.yml down
 (add `-v` too if you also want its `./data-staging/` volume gone --
 `down` alone leaves the folder on disk).
 
+## Layout & navigation
+
+The app is one scrolling page (Discover → Plan & grocery list → Pantry →
+pantry insights), not a multi-page SPA -- there's no router, no build
+step, nothing to compile. What makes it navigable despite that:
+
+- A **sticky header** stays pinned at the top of the viewport while
+  scrolling, with quick-jump links (Discover / Plan & list / Pantry) on
+  wider screens, so any section is one tap away without scrolling past
+  everything above it.
+- On narrow (mobile) viewports, those links move into a **fixed bottom
+  tab bar** instead -- a thumb reaches the bottom of a phone screen far
+  more easily than the top, and it's the pattern most mobile apps already
+  use for primary navigation. Below `720px` wide, the top links hide and
+  the bottom bar appears; above it, the reverse.
+- A **slide-in drawer** (hamburger icon in the header, or "More" in the
+  bottom bar -- both open the same drawer) holds everything that isn't
+  part of that core flow: account actions (change password, sign out,
+  admin link), **Invite someone**, and **Browse other users**. These
+  don't need to compete for space in the main scroll, and burying them
+  in a drawer rather than a dedicated page keeps them reachable from
+  anywhere without a full navigation.
+- Filters and the pantry's add-item row reflow into a 2-column grid on
+  narrow screens instead of either a single cramped row or everything
+  stacked full-width one field at a time.
+
 ## Filtering: category, cuisine, tags, and season
 
 - **Category** narrows to a broad group (Chicken, Seafood, Dessert,
@@ -313,7 +339,7 @@ accept-invite, change-password, admin-created accounts, and admin
 password resets.
 
 Any signed-in user can change their own password any time from the
-account bar, and can sign out of every session at once
+account menu, and can sign out of every session at once
 (`POST /api/auth/logout-all`) -- not just the current browser -- for a
 lost/stolen device or "I left myself logged in somewhere." Login and
 accept-invite are both rate-limited per IP (8 attempts / 10 min,
@@ -334,7 +360,7 @@ reject a `must_change_password` account with everything except the
 change-password endpoint itself), not just a frontend redirect that a
 direct API call could skip.
 
-From the **Admin** panel (linked from the account bar for any admin
+From the **Admin** panel (linked from the account menu for any admin
 user), an admin can create an account directly with a temporary password
 they set themselves, no invite link needed -- forced to change it on
 first login, same as any admin-created account. This is the direct

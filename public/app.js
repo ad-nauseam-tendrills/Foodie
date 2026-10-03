@@ -13,7 +13,11 @@ const state = {
 };
 
 const el = {
-  accountBar: document.getElementById('accountBar'),
+  menuToggleBtn: document.getElementById('menuToggleBtn'),
+  bottomMenuBtn: document.getElementById('bottomMenuBtn'),
+  drawerOverlay: document.getElementById('drawerOverlay'),
+  drawer: document.getElementById('drawer'),
+  drawerClose: document.getElementById('drawerClose'),
   accountStatusText: document.getElementById('accountStatusText'),
   adminLink: document.getElementById('adminLink'),
   changePasswordLink: document.getElementById('changePasswordLink'),
@@ -96,6 +100,27 @@ const el = {
   browsePantryList: document.getElementById('browsePantryList'),
   browsePantryEmpty: document.getElementById('browsePantryEmpty'),
 };
+
+// ---------- Drawer (account menu + invites + browse-other-users) --------
+//
+// Everything that isn't part of the main "find something to cook, plan
+// it, stock the pantry" flow -- account actions, inviting someone,
+// browsing other accounts -- lives in a slide-in drawer instead of taking
+// up scroll space in the main column. Opened from either the topbar
+// hamburger (desktop) or the bottom tab bar's "More" button (mobile);
+// both point at the same drawer.
+
+function openDrawer() {
+  el.drawer.classList.add('open');
+  el.drawerOverlay.classList.remove('hidden');
+  document.body.classList.add('drawer-open'); // locks background scroll behind the overlay
+}
+
+function closeDrawer() {
+  el.drawer.classList.remove('open');
+  el.drawerOverlay.classList.add('hidden');
+  document.body.classList.remove('drawer-open');
+}
 
 // ---------- Tag input helper --------------------------------------------
 
@@ -1213,6 +1238,21 @@ wireTagChipInput({
 });
 
 wireIngredientAutocomplete(el.pantryIngredient, el.pantrySuggestions);
+
+el.menuToggleBtn.addEventListener('click', openDrawer);
+el.bottomMenuBtn.addEventListener('click', openDrawer);
+el.drawerClose.addEventListener('click', closeDrawer);
+el.drawerOverlay.addEventListener('click', closeDrawer);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && el.drawer.classList.contains('open')) closeDrawer();
+});
+// Jumping to a section via the topbar/bottom nav should also close the
+// drawer if it happened to be open (e.g. opened, then changed their mind
+// and tapped a nav link instead) -- otherwise it's left covering the
+// section they just asked to see.
+for (const link of document.querySelectorAll('.topbar-nav a, .bottom-nav a')) {
+  link.addEventListener('click', closeDrawer);
+}
 
 el.signOutBtn.addEventListener('click', signOut);
 el.signOutAllBtn.addEventListener('click', signOutAll);

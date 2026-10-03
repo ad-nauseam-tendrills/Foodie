@@ -22,6 +22,8 @@
    `hidden` to always win, regardless of what else styles the element. */
 [hidden] { display: none !important; }
 
+html { scroll-behavior: smooth; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -29,7 +31,14 @@ body {
   color: var(--text);
 }
 
+/* Locks background scroll while the drawer is open, so dragging on the
+   backdrop doesn't also scroll the page underneath it. */
+body.drawer-open { overflow: hidden; }
+
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -42,6 +51,35 @@ body {
 
 .topbar h1 { margin: 0; font-size: 1.4rem; }
 
+.topbar-nav {
+  display: flex;
+  gap: 1.25rem;
+  flex: 1;
+}
+
+.topbar-nav a {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.topbar-nav a:hover { color: var(--accent); }
+
+.menu-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 1.1rem;
+  padding: 0.3rem 0.65rem;
+  line-height: 1.4;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.menu-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Still used by admin.html's simpler, non-drawer topbar. */
 .account-bar {
   display: flex;
   align-items: center;
@@ -50,6 +88,89 @@ body {
 }
 
 .account-status { font-size: 0.85rem; color: var(--muted); }
+.drawer-section .account-status { display: block; margin-bottom: 0.75rem; }
+
+/* ---------- Bottom tab bar (mobile section nav) ---------- */
+/* Hidden by default -- the media query below swaps this in for
+   .topbar-nav on narrow screens, since a thumb can reach the bottom of
+   the screen far more easily than the top. */
+
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 0.3rem 0.5rem env(safe-area-inset-bottom);
+}
+
+.bottom-nav-link {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.68rem;
+  font-family: inherit;
+  padding: 0.3rem 0;
+  cursor: pointer;
+}
+
+.bottom-nav-icon { font-size: 1.15rem; }
+
+/* ---------- Drawer (account menu, invites, browse other users) ---------- */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 15, 10, 0.5);
+  z-index: 50;
+}
+
+.drawer-overlay.hidden { display: none; }
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 51;
+  width: min(85vw, 360px);
+  background: var(--panel);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+  padding: 1.5rem;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+}
+
+.drawer.open { transform: translateX(0); }
+
+.drawer-section {
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+.drawer-section h3 { margin-top: 0; }
+
+.drawer-account-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.drawer-account-actions .link-btn { font-size: 0.85rem; }
 
 main {
   max-width: 900px;
@@ -898,4 +1019,96 @@ footer a { color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* ---------- Anchor scroll offset ---------- */
+/* Jumping to a section via the nav shouldn't land it flush under the
+   sticky header -- this leaves room for the header's own height. */
+#discoverSection,
+#planSection,
+#pantryPanel {
+  scroll-margin-top: 76px;
+}
+
+/* ---------- Mobile layout ---------- */
+
+@media (max-width: 720px) {
+  .topbar-nav { display: none; }
+  .bottom-nav { display: flex; }
+
+  /* Room for the fixed bottom tab bar so it never covers the last
+     panel or the footer. */
+  body { padding-bottom: 60px; }
+
+  .topbar { padding: 0.75rem 1rem; }
+  .topbar h1 { font-size: 1.2rem; }
+
+  main { padding: 1rem; gap: 1rem; }
+  .panel { padding: 1rem; }
+
+  /* A 2-column grid reads better on a phone than either one cramped
+     row or everything stacked full-width -- selects/text inputs pair
+     up, and anything that needs the full row (checkboxes, buttons)
+     just spans both columns. */
+  .filters-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .filter-field { min-width: 0; }
+
+  .filter-field-checkbox,
+  .filter-field:has(#nameSearchInput),
+  .filter-field:has(#filterTagInput) {
+    grid-column: 1 / -1;
+  }
+
+  .pantry-add-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  #pantryIngredientInput,
+  #pantrySuggestions,
+  #pantryAddBtn,
+  #pantryScanBtn {
+    grid-column: 1 / -1;
+  }
+
+  #pantryQuantity,
+  #pantryUnit,
+  #pantryPrice,
+  #pantryStore {
+    width: 100%;
+  }
+
+  .invite-generate-row,
+  .scanner-manual-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .invite-generate-row input[type="text"] { min-width: 0; }
+
+  .admin-filter-row { flex-direction: column; align-items: stretch; }
+  .search-input { max-width: none; }
+
+  .recipe-card img { height: 110px; }
+
+  .drawer { width: min(88vw, 360px); padding: 1.25rem; }
+
+  /* The flat row of checkbox + text + badges + several buttons has no
+     good wrap point at this width -- items end up overlapping rather
+     than wrapping cleanly. Stacking everything is a bit taller, but
+     nothing competes for the same line. */
+  .admin-list-item,
+  .member-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .admin-list-item .admin-badges { margin: 0; }
 }

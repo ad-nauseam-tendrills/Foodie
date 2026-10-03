@@ -9,18 +9,70 @@
 <body>
   <header class="topbar">
     <h1>🍽️ Foodie</h1>
-    <div id="accountBar" class="account-bar">
-      <span id="accountStatusText" class="account-status"></span>
-      <a id="adminLink" href="/admin.html" class="link-btn" hidden>Admin</a>
-      <a id="changePasswordLink" href="/?changePassword=1" class="link-btn" hidden>Change password</a>
-      <button id="signOutBtn" class="secondary" hidden>Sign out</button>
-      <button id="signOutAllBtn" class="secondary" hidden title="Sign out of every device/session, not just this one">Sign out everywhere</button>
-      <a id="signInLink" href="/" class="link-btn" hidden>Sign in</a>
-    </div>
+    <nav class="topbar-nav" aria-label="Jump to section">
+      <a href="#discoverSection">Discover</a>
+      <a href="#planSection">Plan &amp; list</a>
+      <a href="#pantryPanel">Pantry</a>
+    </nav>
+    <button id="menuToggleBtn" class="menu-toggle" type="button" aria-label="Open menu">☰</button>
   </header>
 
+  <nav class="bottom-nav" aria-label="Jump to section">
+    <a href="#discoverSection" class="bottom-nav-link"><span class="bottom-nav-icon">🔍</span>Discover</a>
+    <a href="#planSection" class="bottom-nav-link"><span class="bottom-nav-icon">📝</span>Plan</a>
+    <a href="#pantryPanel" class="bottom-nav-link"><span class="bottom-nav-icon">🧺</span>Pantry</a>
+    <button id="bottomMenuBtn" class="bottom-nav-link" type="button"><span class="bottom-nav-icon">☰</span>More</button>
+  </nav>
+
+  <div id="drawerOverlay" class="drawer-overlay hidden"></div>
+  <aside id="drawer" class="drawer" aria-label="Account and more">
+    <button id="drawerClose" class="modal-close" aria-label="Close menu">✕</button>
+
+    <div class="drawer-section">
+      <span id="accountStatusText" class="account-status"></span>
+      <div class="drawer-account-actions">
+        <a id="adminLink" href="/admin.html" class="link-btn" hidden>Admin settings</a>
+        <a id="changePasswordLink" href="/?changePassword=1" class="link-btn" hidden>Change password</a>
+        <button id="signOutBtn" class="secondary" hidden>Sign out</button>
+        <button id="signOutAllBtn" class="secondary" hidden title="Sign out of every device/session, not just this one">Sign out everywhere</button>
+        <a id="signInLink" href="/" class="link-btn" hidden>Sign in</a>
+      </div>
+    </div>
+
+    <div class="drawer-section" id="invitePanel" hidden>
+      <h3>Invite someone</h3>
+      <p class="muted">Generates a link that lets someone create their own account -- no email is sent by the app, copy it and send it yourself however you like.</p>
+      <div class="invite-generate-row">
+        <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
+        <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
+      </div>
+      <div id="inviteLinkBox" class="invite-link-box" hidden>
+        <input id="inviteLinkOutput" type="text" readonly />
+        <button id="copyInviteLinkBtn" type="button">Copy</button>
+      </div>
+      <ul id="pendingInvitesList" class="pending-invites-list"></ul>
+    </div>
+
+    <div class="drawer-section" id="browseUsersPanel" hidden>
+      <h3>Browse other users</h3>
+      <p class="muted">Every signed-in user can see any other user's data, read-only -- liked/disliked ingredients, meal plan, pantry (including prices), and cooking history.</p>
+      <input id="userSearchInput" type="search" class="search-input" placeholder="Search by email..." />
+      <ul id="userBrowseList" class="members-list"></ul>
+      <div id="browseUserResult" class="browse-user-result" hidden>
+        <h3 id="browseUserTitle"></h3>
+        <p id="browseUserCookStats" class="muted"></p>
+        <p><strong>Likes:</strong> <span id="browseLiked" class="muted"></span></p>
+        <p><strong>Avoids:</strong> <span id="browseDisliked" class="muted"></span></p>
+        <p><strong>Meal plan:</strong> <span id="browsePlanned" class="muted"></span></p>
+        <h4>Pantry</h4>
+        <ul id="browsePantryList" class="pantry-inventory-list"></ul>
+        <p id="browsePantryEmpty" class="empty-state">Nothing in their pantry.</p>
+      </div>
+    </div>
+  </aside>
+
   <main>
-    <section class="panel">
+    <section class="panel" id="discoverSection">
       <h2>What do you like?</h2>
       <label for="likeInput">Ingredients you have / like</label>
       <div class="tag-input" id="likeTagInput">
@@ -119,7 +171,7 @@
       <div id="results" class="results"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="planSection">
       <h2>Meal plan</h2>
       <p class="muted">Add recipes below, then their ingredients combine into one grocery list.</p>
       <div id="plannedList" class="planned-list"></div>
@@ -165,37 +217,6 @@
       <h3>You keep running out of…</h3>
       <ul id="restockList" class="restock-list"></ul>
       <p id="restockEmpty" class="empty-state">Not enough usage history yet to suggest restocks.</p>
-    </section>
-
-    <section class="panel" id="invitePanel" hidden>
-      <h2>Invite someone</h2>
-      <p class="muted">Generates a link that lets someone create their own account -- no email is sent by the app, copy it and send it yourself however you like.</p>
-      <div class="invite-generate-row">
-        <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
-        <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
-      </div>
-      <div id="inviteLinkBox" class="invite-link-box" hidden>
-        <input id="inviteLinkOutput" type="text" readonly />
-        <button id="copyInviteLinkBtn" type="button">Copy</button>
-      </div>
-      <ul id="pendingInvitesList" class="pending-invites-list"></ul>
-    </section>
-
-    <section class="panel" id="browseUsersPanel" hidden>
-      <h2>Browse other users</h2>
-      <p class="muted">Every signed-in user can see any other user's data, read-only -- liked/disliked ingredients, meal plan, pantry (including prices), and cooking history.</p>
-      <input id="userSearchInput" type="search" class="search-input" placeholder="Search by email..." />
-      <ul id="userBrowseList" class="members-list"></ul>
-      <div id="browseUserResult" class="browse-user-result" hidden>
-        <h3 id="browseUserTitle"></h3>
-        <p id="browseUserCookStats" class="muted"></p>
-        <p><strong>Likes:</strong> <span id="browseLiked" class="muted"></span></p>
-        <p><strong>Avoids:</strong> <span id="browseDisliked" class="muted"></span></p>
-        <p><strong>Meal plan:</strong> <span id="browsePlanned" class="muted"></span></p>
-        <h4>Pantry</h4>
-        <ul id="browsePantryList" class="pantry-inventory-list"></ul>
-        <p id="browsePantryEmpty" class="empty-state">Nothing in their pantry.</p>
-      </div>
     </section>
   </main>
 

@@ -17,6 +17,12 @@ const el = {
   bulkDeleteBtn: document.getElementById('bulkDeleteBtn'),
   bulkClearBtn: document.getElementById('bulkClearBtn'),
   usersList: document.getElementById('usersList'),
+  inviteNote: document.getElementById('inviteNote'),
+  generateInviteBtn: document.getElementById('generateInviteBtn'),
+  inviteLinkBox: document.getElementById('inviteLinkBox'),
+  inviteLinkOutput: document.getElementById('inviteLinkOutput'),
+  copyInviteLinkBtn: document.getElementById('copyInviteLinkBtn'),
+  pendingInvitesList: document.getElementById('pendingInvitesList'),
 };
 
 let myEmail = null;
@@ -321,8 +327,80 @@ async function signOut() {
   window.location.href = '/';
 }
 
+// ---------- Invites (same feature as the main app's drawer, surfaced
+// here too since an admin managing accounts is exactly who'd reach for
+// this -- not admin-only, just convenient from Admin settings) --------
+
+async function loadInvites() {
+  const invites = await fetchJson('/api/invites');
+  renderInvites(invites);
+}
+
+function renderInvites(invites) {
+  el.pendingInvitesList.innerHTML = '';
+  for (const invite of invites) {
+    const li = document.createElement('li');
+    li.className = 'pending-invite-item';
+
+    const text = document.createElement('span');
+    const statusSpan = document.createElement('span');
+    statusSpan.className = `invite-status ${invite.status}`;
+    statusSpan.textContent = invite.status;
+    text.appendChild(statusSpan);
+    const label = invite.note ? ` -- ${invite.note}` : '';
+    const detail =
+      invite.status === 'used'
+        ? `${label} (created ${invite.usedByEmail})`
+        : invite.status === 'expired'
+          ? `${label} (expired ${new Date(invite.expiresAt).toLocaleDateString()})`
+          : `${label} (expires ${new Date(invite.expiresAt).toLocaleDateString()})`;
+    text.append(' ' + detail);
+    li.appendChild(text);
+
+    if (invite.status === 'pending') {
+      const revokeBtn = document.createElement('button');
+      revokeBtn.type = 'button';
+      revokeBtn.textContent = 'revoke';
+      revokeBtn.addEventListener('click', async () => {
+        await fetchJson(`/api/invites/${invite.id}`, { method: 'DELETE' });
+        await loadInvites();
+      });
+      li.appendChild(revokeBtn);
+    }
+
+    el.pendingInvitesList.appendChild(li);
+  }
+}
+
+async function generateInvite() {
+  const note = el.inviteNote.value.trim();
+  const data = await postJson('/api/invites', note ? { note } : {});
+  el.inviteNote.value = '';
+  el.inviteLinkBox.hidden = false;
+  el.inviteLinkOutput.value = data.url;
+  el.inviteLinkOutput.select();
+  await loadInvites();
+}
+
+async function copyInviteLink() {
+  const value = el.inviteLinkOutput.value;
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    el.inviteLinkOutput.select();
+    document.execCommand('copy');
+  }
+  const original = el.copyInviteLinkBtn.textContent;
+  el.copyInviteLinkBtn.textContent = 'Copied!';
+  setTimeout(() => {
+    el.copyInviteLinkBtn.textContent = original;
+  }, 1500);
+}
+
 el.createUserForm.addEventListener('submit', submitCreateUser);
 el.signOutBtn.addEventListener('click', signOut);
+el.generateInviteBtn.addEventListener('click', generateInvite);
+el.copyInviteLinkBtn.addEventListener('click', copyInviteLink);
 el.usersSearch.addEventListener('input', renderUsers);
 el.bulkDeleteBtn.addEventListener('click', bulkDelete);
 el.bulkClearBtn.addEventListener('click', () => {
@@ -357,5 +435,5 @@ el.usersFilterChips.addEventListener('click', (e) => {
   }
   myEmail = me.email;
   el.accountStatusText.textContent = `${me.email} (admin)`;
-  await loadUsers();
+  await Promise.all([loadUsers(), loadInvites()]);
 })();

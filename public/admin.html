@@ -40,6 +40,24 @@
     </section>
 
     <section class="panel">
+      <h2>Invite someone</h2>
+      <p class="muted">
+        The other way to get someone an account -- generates a link that lets them pick their own
+        email and password, rather than you setting a temporary one for them. No email is sent by
+        the app; copy the link and send it yourself however you like.
+      </p>
+      <div class="invite-generate-row">
+        <input id="inviteNote" type="text" placeholder="note (optional, e.g. &quot;for mom&quot;)" />
+        <button id="generateInviteBtn" class="secondary" type="button">Generate invite link</button>
+      </div>
+      <div id="inviteLinkBox" class="invite-link-box" hidden>
+        <input id="inviteLinkOutput" type="text" readonly />
+        <button id="copyInviteLinkBtn" type="button">Copy</button>
+      </div>
+      <ul id="pendingInvitesList" class="pending-invites-list"></ul>
+    </section>
+
+    <section class="panel">
       <h2>Users</h2>
       <p id="usersStats" class="muted"></p>
 
